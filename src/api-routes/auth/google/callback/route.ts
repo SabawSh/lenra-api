@@ -1,0 +1,183 @@
+import {
+  GOOGLE_INTENT_COOKIE,
+  GOOGLE_RETURN_COOKIE,
+  clearGoogleOAuthCookiesOnResponse,
+  exchangeGoogleCode,
+  fetchGoogleProfile,
+  oauthRedirect,
+  verifySignedOAuthState,
+  type GoogleOAuthIntent,
+} from "@/lib/auth/google";
+import {
+  linkVerifiedPhoneToUser,
+  loginOrRegisterViaGoogle,
+  resolveUserIdFromGoogleSub,
+} from "@/lib/auth/linking";
+import {
+  PENDING_PHONE_COOKIE,
+  verifyPendingPhoneToken,
+} from "@/lib/auth/pendingVerification";
+import { postAuthRedirectPath } from "@/lib/auth/postAuthRedirect";
+import { setSessionForUserOnResponse } from "@/lib/auth/setSessionForUser";
+import { revalidateTag } from "next/cache";
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const code = url.searchParams.get("code");
+  const stateParam = url.searchParams.get("state");
+  const errorParam = url.searchParams.get("error");
+
+  const cookieStore = await cookies();
+  const signed = stateParam ? verifySignedOAuthState(stateParam) : null;
+  const requestedNext =
+    signed?.next ?? cookieStore.get(GOOGLE_RETURN_COOKIE)?.value;
+  const intent = (signed?.intent ??
+    cookieStore.get(GOOGLE_INTENT_COOKIE)?.value) as
+    | GoogleOAuthIntent
+    | undefined;
+
+  const failureRedirect = (reason: string) => {
+    const res = NextResponse.redirect(
+      oauthRedirect(req, `/sign-in?error=google_${reason}`),
+    );
+    clearGoogleOAuthCookiesOnResponse(res, req);
+    return res;
+  };
+  const linkFailureRedirect = (code: string) => {
+    const res = NextResponse.redirect(
+      oauthRedirect(req, `/sign-in?error=link_${code}`),
+    );
+    clearGoogleOAuthCookiesOnResponse(res, req);
+    return res;
+  };
+
+  if (errorParam) return failureRedirect(errorParam);
+  if (!code || !stateParam) return failureRedirect("missing_params");
+  if (!signed) return failureRedirect("bad_state");
+
+  try {
+    const tokens = await exchangeGoogleCode(code, req);
+    const profile = await fetchGoogleProfile(tokens.access_token);
+    if (!profile.sub) return failureRedirect("missing_sub");
+
+    const now = new Date();
+
+    if (intent === "link_phone") {
+      const pendingRaw = cookieStore.get(PENDING_PHONE_COOKIE)?.value;
+      cookieStore.set(PENDING_PHONE_COOKIE, "", { path: "/", maxAge: 0 });
+
+      const pending = pendingRaw
+        ? await verifyPendingPhoneToken(pendingRaw)
+        : null;
+      if (!pending) {
+        return linkFailureRedirect("pending_phone_expired");
+      }
+
+      const googleUserId = await resolveUserIdFromGoogleSub(profile.sub);
+      let user;
+      let isNewUser = false;
+
+      if (googleUserId) {
+        const linked = await linkVerifiedPhoneToUser(
+          googleUserId,
+          pending.phone,
+          now,
+        );
+        if (!linked.ok) {
+          return linkFailureRedirect(linked.code);
+        }
+        user = linked.user;
+      } else {
+        const registered = await loginOrRegisterViaGoogle({
+          googleSub: profile.sub,
+          email: profile.email ?? null,
+          name: profile.name ?? null,
+          avatarUrl: profile.picture ?? null,
+          emailVerifiedAt: profile.email_verified ? now : null,
+          lastActive: now,
+        });
+        user = registered.user;
+        isNewUser = registered.isNewUser;
+
+        const linked = await linkVerifiedPhoneToUser(
+          user.id,
+          pending.phone,
+          now,
+        );
+        if (!linked.ok) {
+          return linkFailureRedirect(linked.code);
+        }
+        user = linked.user;
+      }
+
+      revalidateTag("user", { expire: 0 });
+
+      const destination = postAuthRedirectPath(user, requestedNext, {
+        pushPrompt: isNewUser,
+      });
+      const res = NextResponse.redirect(oauthRedirect(req, destination));
+      clearGoogleOAuthCookiesOnResponse(res, req);
+      await setSessionForUserOnResponse(res, user);
+      return res;
+    }
+
+    if (intent === "link_google_settings") {
+      const sessionModule = await import("@/lib/auth/sessionCookie");
+      const session = await sessionModule.readSessionFromCookies();
+      if (!session) return failureRedirect("not_signed_in");
+
+      const { linkGoogleToUser } = await import("@/lib/auth/linking");
+      const linked = await linkGoogleToUser(session.userId, {
+        googleSub: profile.sub,
+        email: profile.email ?? null,
+        name: profile.name ?? null,
+        avatarUrl: profile.picture ?? null,
+        emailVerifiedAt: profile.email_verified ? now : null,
+        verifiedAt: now,
+      });
+      if (!linked.ok) {
+        const res = NextResponse.redirect(
+          oauthRedirect(
+            req,
+            `/dashboard/settings?panel=login&error=${linked.code}`,
+          ),
+        );
+        clearGoogleOAuthCookiesOnResponse(res, req);
+        return res;
+      }
+
+      revalidateTag("user", { expire: 0 });
+      const res = NextResponse.redirect(
+        oauthRedirect(req, "/dashboard/settings?panel=login&linked=google"),
+      );
+      clearGoogleOAuthCookiesOnResponse(res, req);
+      return res;
+    }
+
+    const { user, isNewUser } = await loginOrRegisterViaGoogle({
+      googleSub: profile.sub,
+      email: profile.email ?? null,
+      name: profile.name ?? null,
+      avatarUrl: profile.picture ?? null,
+      emailVerifiedAt: profile.email_verified ? now : null,
+      lastActive: now,
+    });
+
+    revalidateTag("user", { expire: 0 });
+
+    const destination = postAuthRedirectPath(user, requestedNext, {
+      pushPrompt: isNewUser,
+    });
+    const res = NextResponse.redirect(oauthRedirect(req, destination));
+    clearGoogleOAuthCookiesOnResponse(res, req);
+    await setSessionForUserOnResponse(res, user);
+    return res;
+  } catch (err) {
+    console.error("[google callback]", err);
+    return failureRedirect("exception");
+  }
+}

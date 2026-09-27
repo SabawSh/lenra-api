@@ -1,0 +1,17 @@
+English normalization variants
+==============================
+
+`english.glm`
+  Source: kaldi-asr/kaldi — egs/ami/s5/local/english.glm
+  URL:    https://github.com/kaldi-asr/kaldi/blob/master/egs/ami/s5/local/english.glm
+  License: Apache License 2.0 (Kaldi repository)
+  Provenance: NIST RT evaluation English GLM scoring filter (en20040920.glm lineage),
+              redistributed with Kaldi.
+
+`englishNormalizationVariants.json`
+  Derived locally from `english.glm` simple `A => B` rules (no invented mappings).
+  Bidirectional equivalence classes only; special NIST tokens (%…) and bracketed
+  alternate rules are excluded.
+
+Regenerate the JSON with:
+  npx tsx scripts/buildEnglishNormalizationVariants.ts
