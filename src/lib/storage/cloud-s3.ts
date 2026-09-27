@@ -69,6 +69,10 @@ export function buildMediaPublicUrl(key: string): string {
   if (explicit) {
     return joinPublicBase(explicit, k);
   }
+  const mediaBase = process.env.MEDIA_BASE_URL?.trim().replace(/\/$/, "");
+  if (mediaBase && /^https?:\/\//i.test(mediaBase)) {
+    return joinPublicBase(mediaBase, k);
+  }
   const hot = process.env.CLOUD_ENDPOINT?.replace(/\/$/, "");
   const bucket = getS3Bucket();
   if (hot) {

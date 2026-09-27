@@ -27,7 +27,6 @@ import {
 import { resolveLearnDisplaySession } from "@/lib/learning/resolveLearnDisplaySession";
 import type { LearnDisplaySessionResult } from "@/lib/learning/resolveLearnDisplaySession";
 import { resolveLearnPlayerStart } from "@/lib/learning/resolveLearnPlayerStart";
-import type { SectionDisplaySlot } from "@/lib/learning/buildSectionDisplaySession";
 import { countComposedDisplaySlotKinds } from "@/lib/learning/sectionDisplaySessionState";
 import { bookmarkOrderForVisibleStep } from "@/lib/learning/sectionResume";
 import {
@@ -43,6 +42,8 @@ import {
   flattenLearningUnitPartIds,
   logSectionTransition,
 } from "@/lib/debug/sectionTransitionTrace";
+import type { LearningUnit } from "@/lib/skill-engine/learning-units/types";
+import type { Part } from "@/types/video";
 
 export type LearnDeferredSideEffect =
   | {
@@ -155,7 +156,7 @@ function isSeriesSectionPath(params: string[] | undefined) {
   );
 }
 
-function return redirectToSectionSummary(
+function redirectToSectionSummary(
   locale: string,
   sectionPath: string,
   extraQuery: Record<string, string> = {},
@@ -214,7 +215,7 @@ export async function resolveLearnPage(
   const contentDifficultyFilter = parseContentDifficultyFilter(
     sp.contentDifficulty,
   );
-  const contentDifficultyQuery =
+  const contentDifficultyQuery: Record<string, string> =
     contentDifficultyFilter === "All"
       ? {}
       : { contentDifficulty: contentDifficultyFilter };
@@ -388,7 +389,7 @@ export async function resolveLearnPage(
       await hydrateVisibleSectionUnits(playlist);
     if (hydratedUnits.length === 0) return { outcome: "notFound" };
 
-    let learningUnits = hydratedUnits;
+    let learningUnits: LearningUnit<Part>[] = hydratedUnits;
     let displaySlots: SectionDisplaySlot[] | undefined;
     let composedDisplaySlots: SectionDisplaySlot[] | undefined;
     const displaySession: LearnDisplaySessionResult | null =
@@ -702,7 +703,7 @@ export async function resolveLearnPage(
 
     const { learningUnits: hydratedUnits, progressionUnits } =
       await hydrateVisibleSectionUnits(playlist);
-    let learningUnits =
+    let learningUnits: LearningUnit<Part>[] =
       contentDifficultyFilter === "All"
         ? hydratedUnits
         : hydratedUnits.filter((unit) =>

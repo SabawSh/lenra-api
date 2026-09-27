@@ -7,6 +7,8 @@
  */
 import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
+import { getApiRequest } from "./apiRequestContext";
+import { readSessionFromRequest } from "./readSessionFromRequest";
 import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_OPTIONS,
@@ -36,6 +38,10 @@ export async function clearSessionCookie(): Promise<void> {
 }
 
 export async function readSessionFromCookies(): Promise<SessionPayload | null> {
+  const apiRequest = getApiRequest();
+  if (apiRequest) {
+    return readSessionFromRequest(apiRequest);
+  }
   const store = await cookies();
   const token = store.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return null;

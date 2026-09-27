@@ -78,6 +78,10 @@ export async function POST(req: Request) {
 
   await updateUserAvatarUrl(user.id, avatarUrl);
 
-  revalidateTag("user", { expire: 0 });
+  try {
+    revalidateTag("user", { expire: 0 });
+  } catch (e) {
+    console.warn("[avatar/upload] revalidateTag skipped", e);
+  }
   return NextResponse.json({ ok: true, avatarUrl });
 }

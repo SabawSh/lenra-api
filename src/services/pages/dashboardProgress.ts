@@ -1,11 +1,13 @@
 import {
   getAvgResponseSec,
-  getDashboardProgressChartData,
   getDueReviewRowsForUser,
   getHistoryContinueRows,
-  getSentenceInputStyleMix,
   getTodayLearningMinutes,
   getWeakSentenceCardsForUser,
+} from "@/lib/db/progressOverview";
+import {
+  getDashboardProgressChartData,
+  getSentenceInputStyleMix,
 } from "@/lib/db/userDashboardStats";
 import { getStreakForUser } from "@/lib/db/learningStreak";
 import { avgAccuracyForUser } from "@/lib/db/queries/userPartProgress";

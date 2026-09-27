@@ -21,6 +21,8 @@ export const pool =
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
   });
 
 if (process.env.NODE_ENV !== "production") {

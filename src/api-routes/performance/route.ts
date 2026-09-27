@@ -35,7 +35,8 @@ import {
   nextResumeAfterCompletion,
 } from "@/lib/db/learningResume";
 import { isContentIdParam } from "@/lib/ids/contentId";
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { runAfterResponse } from "@/lib/runAfterResponse";
 
 type PerformanceBody = {
   partId: string;
@@ -331,7 +332,7 @@ export async function POST(req: Request) {
       : 0;
 
     // Non-critical: XP, achievements, section skill, cache — still run, not awaited by client.
-    after(async () => {
+    runAfterResponse(async () => {
       try {
         const streakBefore = await getStreakForUser(user.id);
         const sectionCtx = await fetchPartAdaptiveSectionContext(part, user.id);

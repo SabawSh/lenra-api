@@ -3,7 +3,6 @@ import { upsertPushSubscription } from "@/lib/db/pushSubscriptions";
 import { setPushEnabled } from "@/lib/db/notificationSettings";
 import type { PushSubscribeBody } from "@/lib/push/types";
 import { isWebPushConfigured } from "@/lib/push/server/vapid";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 function parseBody(body: unknown): PushSubscribeBody | null {
@@ -39,8 +38,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
   }
 
-  const h = await headers();
-  const userAgent = h.get("user-agent");
+  const userAgent = req.headers.get("user-agent");
 
   try {
     const row = await upsertPushSubscription({

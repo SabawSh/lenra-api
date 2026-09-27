@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runWithApiRequest } from "@/lib/auth/apiRequestContext.js";
+import { toNextRequest } from "./toNextRequest.js";
 import type { AppEnv } from "../../types.js";
 import { compileRoutes, matchLenraRoute } from "./match.js";
 import { lenraRoutes, type LenraRouteHandler } from "./registry.generated.js";
@@ -75,7 +76,7 @@ lenraApiDispatch.all("*", async (c) => {
           matched.params as Record<string, string | string[]>,
         ),
       };
-      return handler(c.req.raw, ctx);
+      return handler(toNextRequest(c.req.raw), ctx);
     });
     return response;
   } catch (error) {

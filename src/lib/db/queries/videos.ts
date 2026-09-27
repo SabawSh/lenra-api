@@ -3,6 +3,7 @@
  */
 import { randomUUID } from "crypto";
 import { pool } from "@/lib/db/connection";
+import { withMysqlConnectionRetry } from "@/lib/db/withMysqlConnectionRetry";
 import { asStringArray } from "@/lib/db/jsonStringArray";
 import { videoTagFromName } from "@/lib/storage/mediaUploadKey";
 import {
@@ -245,8 +246,10 @@ async function execRows<T extends RowDataPacket>(
   params: SqlScalar[],
   db?: DbQueryable,
 ): Promise<T[]> {
-  const [rows] = await q(db).execute<T[]>(sql, params);
-  return rows;
+  return withMysqlConnectionRetry(async () => {
+    const [rows] = await q(db).execute<T[]>(sql, params);
+    return rows;
+  });
 }
 
 /** mysql2 prepared statements reject bound LIMIT placeholders on some MySQL servers. */
