@@ -116,6 +116,12 @@ export type ContentRefreshCounts = {
   grammarConceptsUpserted: number;
   grammarOccurrencesImported: number;
   grammarStubConceptsCreated: number;
+  dictionaryCoverageWordTokenInstances: number;
+  dictionaryCoverageEligibleLemmas: number;
+  dictionaryCoverageAlreadyCovered: number;
+  dictionaryCoveragePendingEntriesEnsured: number;
+  dictionaryCoverageJobsCreated: number;
+  dictionaryCoverageDuplicateJobsAvoided: number;
 };
 
 export type ContentRefreshValidation = {

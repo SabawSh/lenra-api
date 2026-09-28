@@ -60,6 +60,8 @@ import type {
   VocabularySenseEntry,
 } from "./types";
 import { buildContentRefreshValidation } from "./validateRefresh";
+import { buildClipDictionaryLemmaInventory } from "@/lib/dictionary/buildClipDictionaryLemmaInventory";
+import { ensureDictionaryCoverageForLemmas } from "@/lib/dictionary/ensureDictionaryCoverage";
 
 function requireFile(path: string, label: string): void {
   if (!existsSync(path)) {
@@ -519,6 +521,12 @@ export async function runContentRefresh(
         grammarConceptsUpserted: 0,
         grammarOccurrencesImported: 0,
         grammarStubConceptsCreated: 0,
+        dictionaryCoverageWordTokenInstances: 0,
+        dictionaryCoverageEligibleLemmas: 0,
+        dictionaryCoverageAlreadyCovered: 0,
+        dictionaryCoveragePendingEntriesEnsured: 0,
+        dictionaryCoverageJobsCreated: 0,
+        dictionaryCoverageDuplicateJobsAvoided: 0,
       },
       validation: null,
       notes,
@@ -543,6 +551,12 @@ export async function runContentRefresh(
   let grammarConceptsUpserted = 0;
   let grammarOccurrencesImported = 0;
   let grammarStubConceptsCreated = 0;
+  let dictionaryCoverageWordTokenInstances = 0;
+  let dictionaryCoverageEligibleLemmas = 0;
+  let dictionaryCoverageAlreadyCovered = 0;
+  let dictionaryCoveragePendingEntriesEnsured = 0;
+  let dictionaryCoverageJobsCreated = 0;
+  let dictionaryCoverageDuplicateJobsAvoided = 0;
   const preservedPartIds =
     progressPreservingReplace && existingPartCount > 0
       ? safePreview.plan.matches.map((m) => m.partId)
@@ -656,6 +670,29 @@ export async function runContentRefresh(
       await assertPreservedPartIds(conn, preservedPartIds);
     }
 
+    const dictionaryInventory = buildClipDictionaryLemmaInventory(clips);
+    dictionaryCoverageWordTokenInstances =
+      dictionaryInventory.totalWordTokenInstances;
+    dictionaryCoverageEligibleLemmas =
+      dictionaryInventory.eligibleLemmas.length;
+    const coverageResult = await ensureDictionaryCoverageForLemmas(
+      conn,
+      dictionaryInventory.eligibleLemmas.map((entry) => entry.lemma),
+    );
+    dictionaryCoverageAlreadyCovered = coverageResult.alreadyCovered;
+    dictionaryCoveragePendingEntriesEnsured =
+      coverageResult.pendingEntriesEnsured;
+    dictionaryCoverageJobsCreated = coverageResult.generationJobsCreated;
+    dictionaryCoverageDuplicateJobsAvoided =
+      coverageResult.duplicateJobsAvoided;
+    console.log(
+      `Dictionary coverage: eligible lemmas=${dictionaryCoverageEligibleLemmas}, ` +
+        `already covered=${dictionaryCoverageAlreadyCovered}, ` +
+        `pending entries ensured=${dictionaryCoveragePendingEntriesEnsured}, ` +
+        `jobs created=${dictionaryCoverageJobsCreated}, ` +
+        `duplicate jobs avoided=${dictionaryCoverageDuplicateJobsAvoided}`,
+    );
+
     await conn.commit();
   } catch (error) {
     await conn.rollback();
@@ -700,6 +737,12 @@ export async function runContentRefresh(
       grammarConceptsUpserted,
       grammarOccurrencesImported,
       grammarStubConceptsCreated,
+      dictionaryCoverageWordTokenInstances,
+      dictionaryCoverageEligibleLemmas,
+      dictionaryCoverageAlreadyCovered,
+      dictionaryCoveragePendingEntriesEnsured,
+      dictionaryCoverageJobsCreated,
+      dictionaryCoverageDuplicateJobsAvoided,
     },
     validation,
     notes,
