@@ -1,4 +1,4 @@
-import { setSessionForUser } from "@/lib/auth/setSessionForUser";
+import { setSessionForUserOnResponse } from "@/lib/auth/setSessionForUser";
 import { readSessionFromCookies } from "@/lib/auth/sessionCookie";
 import { recordLegalAcceptance } from "@/lib/db/queries/users";
 import { postAuthRedirectPath } from "@/lib/auth/postAuthRedirect";
@@ -45,11 +45,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "user_not_found" }, { status: 404 });
   }
 
-  await setSessionForUser(user);
   revalidateTag("user", { expire: 0 });
 
   const safeNext = sanitizeNext(body.next);
   const redirectTo = postAuthRedirectPath(user, safeNext);
 
-  return NextResponse.json({ ok: true, redirectTo });
+  const response = NextResponse.json({ ok: true, redirectTo });
+  await setSessionForUserOnResponse(response, user);
+  return response;
 }
