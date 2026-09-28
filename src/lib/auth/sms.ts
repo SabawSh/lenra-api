@@ -37,6 +37,11 @@ function isKavenegarTestMode(): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+/** Trim env noise; Kavenegar panel keys are often long hex strings — use as-is. */
+function normalizeKavenegarApiKey(raw: string): string {
+  return raw.trim().replace(/^["']|["']$/g, "");
+}
+
 interface KavenegarReturn {
   status: number;
   message: string;
@@ -48,7 +53,7 @@ interface KavenegarResponse {
 }
 
 export async function sendOtpLookup(req: OtpLookupRequest): Promise<SmsResult> {
-  const apiKey = process.env.KAVENEGAR_API_KEY;
+  const apiKey = normalizeKavenegarApiKey(process.env.KAVENEGAR_API_KEY ?? "");
   if (!apiKey) {
     console.warn(
       `[sms:dev] KAVENEGAR_API_KEY is not set — would send OTP to ${req.to}: token="${req.token}"`
