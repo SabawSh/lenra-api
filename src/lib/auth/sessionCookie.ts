@@ -37,6 +37,14 @@ export async function clearSessionCookie(): Promise<void> {
   store.set(SESSION_COOKIE_NAME, "", { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
 }
 
+/** Clear session on an API route response (required when lenra-api runs outside Next RSC). */
+export function clearSessionCookieOnResponse(response: NextResponse): void {
+  response.cookies.set(SESSION_COOKIE_NAME, "", {
+    ...SESSION_COOKIE_OPTIONS,
+    maxAge: 0,
+  });
+}
+
 export async function readSessionFromCookies(): Promise<SessionPayload | null> {
   const apiRequest = getApiRequest();
   if (apiRequest) {
