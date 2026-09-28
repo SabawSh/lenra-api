@@ -2,12 +2,11 @@ import { registerViaVerifiedPhone } from "@/lib/auth/linking";
 import {
   PENDING_PHONE_COOKIE,
   PENDING_PHONE_COOKIE_OPTIONS,
-  verifyPendingPhoneToken,
+  readPendingPhoneFromRequest,
 } from "@/lib/auth/pendingVerification";
 import { postAuthRedirectPath } from "@/lib/auth/postAuthRedirect";
 import { setSessionForUserOnResponse } from "@/lib/auth/setSessionForUser";
 import type { JsonValue } from "@/types/json";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -28,9 +27,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const cookieStore = await cookies();
-  const pendingRaw = cookieStore.get(PENDING_PHONE_COOKIE)?.value;
-  const pending = pendingRaw ? await verifyPendingPhoneToken(pendingRaw) : null;
+  const pending = await readPendingPhoneFromRequest(req);
   if (!pending) {
     return NextResponse.json({ error: "pending_phone_expired" }, { status: 401 });
   }

@@ -4,7 +4,7 @@ import {
   type SessionPayload,
 } from "./session";
 
-function parseCookieHeader(header: string): Record<string, string> {
+export function parseCookieHeader(header: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of header.split(";")) {
     const [rawName, ...rest] = part.split("=");

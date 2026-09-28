@@ -3,6 +3,7 @@
  * Used between OTP verify and Google link / phone signup — not a session.
  */
 import { normalizeIranPhone } from "@/lib/auth/phone";
+import { parseCookieHeader } from "@/lib/auth/readSessionFromRequest";
 import { SignJWT, jwtVerify } from "jose";
 
 export const PENDING_PHONE_COOKIE = "lenra_pending_phone";
@@ -53,3 +54,14 @@ export const PENDING_PHONE_COOKIE_OPTIONS = {
   path: "/",
   maxAge: TTL_SECONDS,
 };
+
+/** Read pending phone after OTP verify (lenra-api has no Next `cookies()`). */
+export async function readPendingPhoneFromRequest(
+  request: Request,
+): Promise<{ phone: string } | null> {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  const token = parseCookieHeader(header)[PENDING_PHONE_COOKIE];
+  if (!token) return null;
+  return verifyPendingPhoneToken(token);
+}
