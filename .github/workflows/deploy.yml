@@ -1,0 +1,54 @@
+name: Deploy Lenra API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t lenra-api:${{ github.sha }} .
+
+      - name: Save Docker image
+        run: |
+          docker save lenra-api:${{ github.sha }} | gzip > lenra-api.tar.gz
+
+      - name: Upload image to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "lenra-api.tar.gz"
+          target: "/tmp"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            docker load < /tmp/lenra-api.tar.gz
+
+            docker rm -f lenra-api 2>/dev/null || true
+
+            docker run -d \
+              --name lenra-api \
+              --restart unless-stopped \
+              --network mysql-network \
+              --env-file /home/ubuntu/projects/lenra-api/.env \
+              -p 127.0.0.1:4000:4000 \
+              lenra-api:${{ github.sha }}
+
+            rm -f /tmp/lenra-api.tar.gz
+
+            docker image prune -f
