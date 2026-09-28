@@ -1,49 +1,51 @@
 import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { userCanAccessLearning } from "@/lib/payments/access";
-import type { LearningSessionStats } from "@/lib/db/learningSessionStats";
-import type { SectionDisplaySlot } from "@/lib/learning/buildSectionDisplaySession";
-import type { SectionSummaryStats } from "@/lib/learning/sectionSummaryStats";
 import { getVideoSeasonShellForLearn } from "@/lib/database";
+import type { LearningSessionStats } from "@/lib/db/learningSessionStats";
 import { getLearningSessionStats } from "@/lib/db/learningSessionStats";
 import {
   getEpisodePartsOrderMeta,
   getVideoPartsOrderMeta,
 } from "@/lib/db/parts";
 import * as videoQueries from "@/lib/db/queries/videos";
+import { countPartsForEpisode } from "@/lib/db/sectionProgress";
 import {
-  countPartsForEpisode,
-} from "@/lib/db/sectionProgress";
+  flattenLearningUnitPartIds,
+  logSectionTransition,
+} from "@/lib/debug/sectionTransitionTrace";
 import { isContentIdParam } from "@/lib/ids/contentId";
 import { getAdaptiveEpisodeOrder } from "@/lib/learning/adaptiveEpisodeOrdering";
+import type { SectionDisplaySlot } from "@/lib/learning/buildSectionDisplaySession";
 import {
   loadSectionSummaryPageData,
   loadSeriesSummaryTitle,
 } from "@/lib/learning/loadSectionSummaryPage";
+import type { LearnDisplaySessionResult } from "@/lib/learning/resolveLearnDisplaySession";
+import { resolveLearnDisplaySession } from "@/lib/learning/resolveLearnDisplaySession";
+import { resolveLearnPlayerStart } from "@/lib/learning/resolveLearnPlayerStart";
 import {
   countVisibleSections,
   getOrMaterializeProgressionSection,
   hydrateVisibleSectionUnits,
 } from "@/lib/learning/sectionCurriculum";
-import { resolveLearnDisplaySession } from "@/lib/learning/resolveLearnDisplaySession";
-import type { LearnDisplaySessionResult } from "@/lib/learning/resolveLearnDisplaySession";
-import { resolveLearnPlayerStart } from "@/lib/learning/resolveLearnPlayerStart";
 import { countComposedDisplaySlotKinds } from "@/lib/learning/sectionDisplaySessionState";
 import { bookmarkOrderForVisibleStep } from "@/lib/learning/sectionResume";
 import {
   sectionIndexFromOrder,
   VISIBLE_UNITS_PER_SECTION,
 } from "@/lib/learning/sections";
+import type { SectionSummaryStats } from "@/lib/learning/sectionSummaryStats";
 import {
   parseContentDifficultyFilter,
   partMatchesContentDifficultyFilter,
 } from "@/lib/learning/videoDifficultyMix";
-import { getTranslations } from "next-intl/server";
-import {
-  flattenLearningUnitPartIds,
-  logSectionTransition,
-} from "@/lib/debug/sectionTransitionTrace";
+import { userCanAccessLearning } from "@/lib/payments/access";
 import type { LearningUnit } from "@/lib/skill-engine/learning-units/types";
 import type { Part } from "@/types/video";
+
+/** Episode breadcrumb fallback — keep API free of next-intl. */
+function episodeLabelPrefix(locale: string): string {
+  return locale.startsWith("fa") ? "قسمت " : "Episode ";
+}
 
 export type LearnDeferredSideEffect =
   | {
@@ -132,7 +134,6 @@ export type LearnPageResolveResult =
         };
       };
     };
-
 
 /** Development-only breadcrumb before every Learn `notFound()`. */
 function learnNotFound(
@@ -246,7 +247,11 @@ export async function resolveLearnPage(
     if (user) {
       const canAccess = await userCanAccessLearning(user);
       if (!canAccess) {
-        return { outcome: "learningBlocked", pathname: "/dashboard/plans", locale };
+        return {
+          outcome: "learningBlocked",
+          pathname: "/dashboard/plans",
+          locale,
+        };
       }
     }
     if (!videoShell) return { outcome: "notFound" };
@@ -257,11 +262,21 @@ export async function resolveLearnPage(
 
     if (!isSeriesSectionPath(rawParams) && legacyOrder != null) {
       const s = sectionIndexFromOrder(legacyOrder);
-      return { outcome: "redirect", pathname: `/learn/series/${videoId}/${seasonId}/${episodeId}/section/${s}`, query: { step: "1" }, locale };
+      return {
+        outcome: "redirect",
+        pathname: `/learn/series/${videoId}/${seasonId}/${episodeId}/section/${s}`,
+        query: { step: "1" },
+        locale,
+      };
     }
 
     if (!isSeriesSectionPath(rawParams)) {
-      return { outcome: "redirect", pathname: `/learn/series/${videoId}/${seasonId}/${episodeId}/section/1`, query: { step: "1" }, locale };
+      return {
+        outcome: "redirect",
+        pathname: `/learn/series/${videoId}/${seasonId}/${episodeId}/section/1`,
+        query: { step: "1" },
+        locale,
+      };
     }
 
     const sectionIndex = +rawParams[3]!;
@@ -274,17 +289,14 @@ export async function resolveLearnPage(
     const exitListHref = `/series/${videoShell.id}/${seasonId}/${episodeId}/sections`;
 
     if (summary) {
-      const [summaryData, t] = await Promise.all([
-        loadSectionSummaryPageData({
-          scope: { episodeId, curriculumId: `episode:${episodeId}` },
-          sectionIndex,
-          userId: user?.id ?? null,
-          totalParts,
-          episodeId,
-          videoId,
-        }),
-        getTranslations("learningBreadcrumb"),
-      ]);
+      const summaryData = await loadSectionSummaryPageData({
+        scope: { episodeId, curriculumId: `episode:${episodeId}` },
+        sectionIndex,
+        userId: user?.id ?? null,
+        totalParts,
+        episodeId,
+        videoId,
+      });
 
       if (!summaryData.found) return { outcome: "notFound" };
 
@@ -319,7 +331,7 @@ export async function resolveLearnPage(
 
       const contentTitle = await loadSeriesSummaryTitle(
         episodeId,
-        t("episode", { num: "" }),
+        episodeLabelPrefix(locale),
       );
 
       const nextSectionHref = summaryData.nextSectionUnlocked
@@ -394,21 +406,21 @@ export async function resolveLearnPage(
     let composedDisplaySlots: SectionDisplaySlot[] | undefined;
     const displaySession: LearnDisplaySessionResult | null =
       await resolveLearnDisplaySession({
-      userId: user?.id ?? null,
-      videoId,
-      episodeId,
-      sectionIndex,
-      globalOrder,
-      user,
-      reviewMode,
-      batchReviewMode,
-      buildOptions: {
-        forceAtomicUnits: true,
+        userId: user?.id ?? null,
+        videoId,
+        episodeId,
         sectionIndex,
-        sectionId: `${curriculumId}:section:${sectionIndex}`,
-      },
-      progressionUnits,
-    });
+        globalOrder,
+        user,
+        reviewMode,
+        batchReviewMode,
+        buildOptions: {
+          forceAtomicUnits: true,
+          sectionIndex,
+          sectionId: `${curriculumId}:section:${sectionIndex}`,
+        },
+        progressionUnits,
+      });
     if (displaySession) {
       displaySlots = displaySession.displaySlots;
       composedDisplaySlots = displaySession.composedDisplaySlots;
@@ -447,14 +459,19 @@ export async function resolveLearnPage(
         : null;
 
     if (!hasStep && legacyPart != null) {
-      return { outcome: "redirect", pathname: sectionPath, query: {
-            step: String(legacyPart),
-            ...learnPlayerQueryExtras({
-              initialAutoplay,
-              reviewMode,
-              batchReviewMode,
-            }),
-          }, locale };
+      return {
+        outcome: "redirect",
+        pathname: sectionPath,
+        query: {
+          step: String(legacyPart),
+          ...learnPlayerQueryExtras({
+            initialAutoplay,
+            reviewMode,
+            batchReviewMode,
+          }),
+        },
+        locale,
+      };
     }
 
     if (!hasStep) {
@@ -463,14 +480,19 @@ export async function resolveLearnPage(
         requestedCanonicalStep: null,
         legacyPlaylistLength: visibleStepCount,
       });
-      return { outcome: "redirect", pathname: sectionPath, query: {
-            step: String(defaultStart.canonicalStep),
-            ...learnPlayerQueryExtras({
-              initialAutoplay,
-              reviewMode,
-              batchReviewMode,
-            }),
-          }, locale };
+      return {
+        outcome: "redirect",
+        pathname: sectionPath,
+        query: {
+          step: String(defaultStart.canonicalStep),
+          ...learnPlayerQueryExtras({
+            initialAutoplay,
+            reviewMode,
+            batchReviewMode,
+          }),
+        },
+        locale,
+      };
     }
 
     const playerStart = resolveLearnPlayerStart({
@@ -549,7 +571,11 @@ export async function resolveLearnPage(
     if (user) {
       const canAccess = await userCanAccessLearning(user);
       if (!canAccess) {
-        return { outcome: "learningBlocked", pathname: "/dashboard/plans", locale };
+        return {
+          outcome: "learningBlocked",
+          pathname: "/dashboard/plans",
+          locale,
+        };
       }
     }
 
@@ -570,11 +596,21 @@ export async function resolveLearnPage(
 
     if (!isMovieSectionPath(rawParams) && legacyOrder != null) {
       const s = sectionIndexFromOrder(legacyOrder);
-      return { outcome: "redirect", pathname: `/learn/${type}/${videoId}/section/${s}`, query: { step: "1" }, locale };
+      return {
+        outcome: "redirect",
+        pathname: `/learn/${type}/${videoId}/section/${s}`,
+        query: { step: "1" },
+        locale,
+      };
     }
 
     if (!isMovieSectionPath(rawParams)) {
-      return { outcome: "redirect", pathname: `/learn/${type}/${videoId}/section/1`, query: { step: "1" }, locale };
+      return {
+        outcome: "redirect",
+        pathname: `/learn/${type}/${videoId}/section/1`,
+        query: { step: "1" },
+        locale,
+      };
     }
 
     const sectionIndex = +rawParams[1]!;
@@ -596,7 +632,10 @@ export async function resolveLearnPage(
       });
 
       if (!summaryData.found) {
-        return learnNotFound("MOVIE_SUMMARY_NOT_FOUND", { videoId, sectionIndex });
+        return learnNotFound("MOVIE_SUMMARY_NOT_FOUND", {
+          videoId,
+          sectionIndex,
+        });
       }
 
       // Do NOT redirect incomplete summary → ?step=1 (restarts finished sections).
@@ -748,7 +787,11 @@ export async function resolveLearnPage(
             !reviewMode &&
             !batchReviewMode
           ) {
-            return redirectToSectionSummary(locale, sectionPath, contentDifficultyQuery);
+            return redirectToSectionSummary(
+              locale,
+              sectionPath,
+              contentDifficultyQuery,
+            );
           }
           return learnNotFound("LEARN_SECTION_PLAYABLE_EMPTY", {
             sectionIndex,
@@ -792,15 +835,20 @@ export async function resolveLearnPage(
         : null;
 
     if (!hasStep && legacyPart != null) {
-      return { outcome: "redirect", pathname: sectionPath, query: {
-            step: String(legacyPart),
-            ...learnPlayerQueryExtras({
-              initialAutoplay,
-              reviewMode,
-              batchReviewMode,
-              contentDifficultyQuery,
-            }),
-          }, locale };
+      return {
+        outcome: "redirect",
+        pathname: sectionPath,
+        query: {
+          step: String(legacyPart),
+          ...learnPlayerQueryExtras({
+            initialAutoplay,
+            reviewMode,
+            batchReviewMode,
+            contentDifficultyQuery,
+          }),
+        },
+        locale,
+      };
     }
 
     if (!hasStep) {
@@ -809,15 +857,20 @@ export async function resolveLearnPage(
         requestedCanonicalStep: null,
         legacyPlaylistLength: visibleStepCount,
       });
-      return { outcome: "redirect", pathname: sectionPath, query: {
-            step: String(defaultStart.canonicalStep),
-            ...learnPlayerQueryExtras({
-              initialAutoplay,
-              reviewMode,
-              batchReviewMode,
-              contentDifficultyQuery,
-            }),
-          }, locale };
+      return {
+        outcome: "redirect",
+        pathname: sectionPath,
+        query: {
+          step: String(defaultStart.canonicalStep),
+          ...learnPlayerQueryExtras({
+            initialAutoplay,
+            reviewMode,
+            batchReviewMode,
+            contentDifficultyQuery,
+          }),
+        },
+        locale,
+      };
     }
 
     const playerStart = resolveLearnPlayerStart({
