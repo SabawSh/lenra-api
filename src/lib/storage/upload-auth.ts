@@ -6,6 +6,7 @@ import {
   getCurrentUserUncached,
 } from "@/lib/auth/getCurrentUser";
 import { isSiteMediaAdmin } from "@/lib/auth/siteAdmin";
+import { normalizeEnvValue } from "@/config/env.js";
 
 /**
  * Presigned uploads are restricted to site media admins (fixed email + phone),
@@ -14,11 +15,20 @@ import { isSiteMediaAdmin } from "@/lib/auth/siteAdmin";
 export async function assertMediaUploadAllowed(
   req: Request
 ): Promise<NextResponse | null> {
-  const apiKey = process.env.CLOUD_UPLOAD_API_KEY?.trim();
   const auth = req.headers.get("authorization");
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : "";
 
-  if (apiKey && bearer === apiKey) {
+  const uploadKey = process.env.CLOUD_UPLOAD_API_KEY
+    ? normalizeEnvValue(process.env.CLOUD_UPLOAD_API_KEY)
+    : "";
+  const internalSecret = process.env.API_INTERNAL_SECRET
+    ? normalizeEnvValue(process.env.API_INTERNAL_SECRET)
+    : "";
+  if (
+    bearer &&
+    ((uploadKey && bearer === uploadKey) ||
+      (internalSecret && bearer === internalSecret))
+  ) {
     return null;
   }
 
