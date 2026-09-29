@@ -1,23 +1,89 @@
-docker load < /tmp/lenra-api.tar.gz
+name: Deploy Lenra API
 
-docker stop lenra-api 2>/dev/null || true
+on:
+  push:
+    branches:
+      - main
 
-docker rename lenra-api lenra-api-old 2>/dev/null || true
+env:
+  IMAGE_NAME: lenra-api
+  DEPLOY_STAGING_DIR: /home/ubuntu/deploy-staging
 
-docker run -d \
---name lenra-api \
---restart unless-stopped \
---network mysql-network \
---env-file /home/ubuntu/projects/lenra-api/.env \
--p 127.0.0.1:4000:4000 \
-lenra-api:${{ github.sha }}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
-sleep 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-curl --fail http://127.0.0.1:4000/health
+      - name: Build Docker image
+        run: docker build -t ${IMAGE_NAME}:${{ github.sha }} .
 
-docker rm -f lenra-api-old 2>/dev/null || true
+      - name: Save Docker image
+        run: |
+          docker save ${IMAGE_NAME}:${{ github.sha }} | gzip -1 > ${IMAGE_NAME}.tar.gz
+          ls -lh ${IMAGE_NAME}.tar.gz
 
-rm -f /tmp/lenra-api.tar.gz
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-docker image prune -af --filter "until=168h"
+      - name: Add deploy host to known_hosts
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Prepare staging directory
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p ${DEPLOY_STAGING_DIR} && df -h ${DEPLOY_STAGING_DIR}"
+
+      - name: Upload image
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          scp -o ServerAliveInterval=15 -o ServerAliveCountMax=120 \
+            "${IMAGE_NAME}.tar.gz" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_STAGING_DIR}/${IMAGE_NAME}.tar.gz"
+
+      - name: Deploy on server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+          set -euo pipefail
+          ARCHIVE="${DEPLOY_STAGING_DIR}/${IMAGE_NAME}.tar.gz"
+          IMAGE_TAG="${IMAGE_TAG}"
+          IMAGE_NAME="${IMAGE_NAME}"
+
+          gunzip -c "\$ARCHIVE" | docker load
+
+          docker stop "\$IMAGE_NAME" 2>/dev/null || true
+          docker rename "\$IMAGE_NAME" "\${IMAGE_NAME}-old" 2>/dev/null || true
+
+          docker run -d \\
+            --name "\$IMAGE_NAME" \\
+            --restart unless-stopped \\
+            --network mysql-network \\
+            --env-file /home/ubuntu/projects/lenra-api/.env \\
+            -p 127.0.0.1:4000:4000 \\
+            "\${IMAGE_NAME}:\${IMAGE_TAG}"
+
+          sleep 5
+          curl --fail "http://127.0.0.1:4000/health"
+
+          docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
+          rm -f "\$ARCHIVE"
+          docker image prune -af --filter "until=168h"
+          EOF
