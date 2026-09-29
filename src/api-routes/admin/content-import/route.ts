@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB per artifact
+const MAX_TOTAL_BYTES = 140 * 1024 * 1024; // ~7 artifacts
 const FIELD_MAP = {
   clips: "clips",
   learningAnalysis: "learningAnalysis",
@@ -63,6 +64,8 @@ async function parseMultipartArtifacts(
     throw new Error("clips.json is required");
   }
 
+  let totalBytes = clipsFile.size;
+
   const artifacts: ContentRefreshArtifactBundle = {
     clips: await readJsonFile(clipsFile, "clips.json"),
   };
@@ -79,6 +82,12 @@ async function parseMultipartArtifacts(
   for (const field of optional) {
     const value = form.get(field);
     if (value instanceof File && value.size > 0) {
+      totalBytes += value.size;
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new Error(
+          `Total upload too large (max ${Math.floor(MAX_TOTAL_BYTES / (1024 * 1024))}MB combined)`,
+        );
+      }
       artifacts[field] = await readJsonFile(value, `${field}.json`);
     }
   }
@@ -145,13 +154,15 @@ export async function POST(req: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status =
-      message.includes("required") ||
-      message.includes("invalid") ||
-      message.includes("not present") ||
-      message.includes("confirmReplace") ||
-      message.includes("already has")
-        ? 400
-        : 500;
+      message.includes("too large") || message.includes("Total upload")
+        ? 413
+        : message.includes("required") ||
+            message.includes("invalid") ||
+            message.includes("not present") ||
+            message.includes("confirmReplace") ||
+            message.includes("already has")
+          ? 400
+          : 500;
     return NextResponse.json(
       {
         ok: false,
