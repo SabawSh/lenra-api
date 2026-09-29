@@ -9,6 +9,7 @@
  * The cookie holds only a tiny payload: `{ userId }`. Everything else is loaded
  * from the DB on demand via `getCurrentUser()`.
  */
+import { normalizeEnvValue } from "@/config/env";
 import { isUserId } from "@/lib/db/userId";
 import type { UserId } from "@/types/schema";
 import { SignJWT, jwtVerify } from "jose";
@@ -28,7 +29,9 @@ export interface SessionPayload {
 }
 
 function getSecretKey(): Uint8Array {
-  const secret = process.env.AUTH_SECRET;
+  const secret = process.env.AUTH_SECRET
+    ? normalizeEnvValue(process.env.AUTH_SECRET)
+    : "";
   if (!secret || secret.length < 32) {
     throw new Error(
       "AUTH_SECRET env var is missing or too short (need at least 32 chars). " +

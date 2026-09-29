@@ -2,6 +2,7 @@ import {
   buildGoogleAuthUrl,
   createSignedOAuthState,
   getGoogleRedirectUri,
+  sanitizeOAuthNext,
   type GoogleOAuthIntent,
 } from "@/lib/auth/google";
 import { NextResponse } from "next/server";
@@ -19,7 +20,7 @@ const VALID_INTENTS: GoogleOAuthIntent[] = [
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const next = url.searchParams.get("next") || "/";
+  const next = sanitizeOAuthNext(url.searchParams.get("next"));
   const intentParam = url.searchParams.get("intent");
 
   const intent =
@@ -30,5 +31,5 @@ export async function GET(req: Request) {
 
   const redirectUri = getGoogleRedirectUri(req);
   const state = createSignedOAuthState({ next, intent, redirectUri });
-  return NextResponse.redirect(buildGoogleAuthUrl(state, req));
+  return NextResponse.redirect(buildGoogleAuthUrl(state, req, redirectUri));
 }

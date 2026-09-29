@@ -4,9 +4,10 @@ import {
   clearGoogleOAuthCookiesOnResponse,
   exchangeGoogleCode,
   fetchGoogleProfile,
-  getGoogleRedirectUri,
   oauthRedirect,
+  redactOAuthLogMessage,
   resolveGoogleRedirectUriForCallback,
+  sanitizeOAuthNext,
   verifySignedOAuthState,
   type GoogleOAuthIntent,
 } from "@/lib/auth/google";
@@ -41,22 +42,34 @@ export async function GET(req: Request) {
     | GoogleOAuthIntent
     | undefined;
 
-  const failureRedirect = (reason: string) => {
+  const failureRedirect = (reason: string, nextOverride?: string | null) => {
+    const params = new URLSearchParams({ error: `google_${reason}` });
+    const nextPath = sanitizeOAuthNext(
+      nextOverride ?? signed?.next ?? requestedNext,
+    );
+    if (nextPath !== "/") params.set("next", nextPath);
     const res = NextResponse.redirect(
-      oauthRedirect(req, `/sign-in?error=google_${reason}`),
+      oauthRedirect(req, `/sign-in?${params.toString()}`),
     );
     clearGoogleOAuthCookiesOnResponse(res, req);
     return res;
   };
   const linkFailureRedirect = (code: string) => {
+    const params = new URLSearchParams({ error: `link_${code}` });
+    const nextPath = sanitizeOAuthNext(signed?.next ?? requestedNext);
+    if (nextPath !== "/") params.set("next", nextPath);
     const res = NextResponse.redirect(
-      oauthRedirect(req, `/sign-in?error=link_${code}`),
+      oauthRedirect(req, `/sign-in?${params.toString()}`),
     );
     clearGoogleOAuthCookiesOnResponse(res, req);
     return res;
   };
 
-  if (errorParam) return failureRedirect(errorParam);
+  if (errorParam) {
+    const reason =
+      errorParam === "access_denied" ? "cancelled" : errorParam;
+    return failureRedirect(reason);
+  }
   if (!code || !stateParam) return failureRedirect("missing_params");
   if (!signed) return failureRedirect("bad_state");
 
@@ -184,7 +197,19 @@ export async function GET(req: Request) {
     return res;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[google callback]", message, err);
+    const mysqlCode =
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      typeof (err as { code: unknown }).code === "string"
+        ? (err as { code: string }).code
+        : undefined;
+
+    console.error(
+      "[google callback]",
+      redactOAuthLogMessage(message),
+      mysqlCode ?? "",
+    );
 
     if (message.includes("Google token exchange failed")) {
       console.error("[google callback] redirect_uri used:", redirectUri);
@@ -200,15 +225,29 @@ export async function GET(req: Request) {
       }
       return failureRedirect("token");
     }
-    if (
-      message.includes("ECONNREFUSED") ||
-      message.includes("ER_ACCESS_DENIED") ||
-      message.includes("connect")
-    ) {
-      console.error("[google callback] database or upstream failure");
-    }
     if (message.includes("Google userinfo failed")) {
       return failureRedirect("profile");
+    }
+    if (message.includes("AUTH_SECRET")) {
+      return failureRedirect("auth_config");
+    }
+    if (mysqlCode === "ER_DUP_ENTRY") {
+      return failureRedirect("email_in_use");
+    }
+    if (
+      mysqlCode === "ER_NO_SUCH_TABLE" ||
+      mysqlCode === "ECONNREFUSED" ||
+      mysqlCode === "ER_ACCESS_DENIED_ERROR"
+    ) {
+      return failureRedirect("db");
+    }
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" ||
+        message.includes("fetch failed") ||
+        message.includes("aborted"))
+    ) {
+      return failureRedirect("network");
     }
     return failureRedirect("exception");
   }

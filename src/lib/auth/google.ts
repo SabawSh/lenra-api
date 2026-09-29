@@ -1,6 +1,7 @@
 /**
  * Google OAuth 2.0 helpers (Authorization Code flow, no library required).
  */
+import { normalizeEnvValue } from "@/config/env";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -23,17 +24,7 @@ export interface GoogleProfile {
   picture?: string;
 }
 
-/** Trim and strip one layer of surrounding quotes (common in Docker/K8s secrets). */
-function normalizeEnvValue(raw: string): string {
-  let v = raw.trim();
-  if (
-    (v.startsWith('"') && v.endsWith('"')) ||
-    (v.startsWith("'") && v.endsWith("'"))
-  ) {
-    v = v.slice(1, -1).trim();
-  }
-  return v;
-}
+const GOOGLE_HTTP_TIMEOUT_MS = 20_000;
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -80,13 +71,66 @@ function originFromEnvUrl(raw: string | undefined): string | null {
   }
 }
 
-/** Canonical public origin from env (production), or null to derive from the request. */
-function envPublicOrigin(): string | null {
-  return (
-    originFromEnvUrl(process.env.GOOGLE_REDIRECT_URI) ??
-    originFromEnvUrl(process.env.API_PUBLIC_URL) ??
-    originFromEnvUrl(process.env.NEXT_PUBLIC_BASE_URL)
-  );
+function requestHostname(req: Request): string {
+  const forwardedHost = req.headers
+    .get("x-forwarded-host")
+    ?.split(",")[0]
+    ?.trim();
+  const host = forwardedHost ?? new URL(req.url).host;
+  return host.split(":")[0]?.toLowerCase() ?? "";
+}
+
+/** Whether a configured public URL should drive OAuth for this request (dev vs prod). */
+function envOriginAppliesToRequest(envOrigin: string, req: Request): boolean {
+  let envHost: string;
+  try {
+    envHost = new URL(envOrigin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return !isLocalHost(envHost);
+  }
+
+  const reqHost = requestHostname(req);
+  if (isLocalHost(reqHost) && !isLocalHost(envHost)) {
+    return false;
+  }
+  return true;
+}
+
+/** Canonical public origin from env when it matches this request's environment. */
+function envPublicOriginForRequest(req: Request): string | null {
+  for (const raw of [
+    process.env.GOOGLE_REDIRECT_URI,
+    process.env.API_PUBLIC_URL,
+    process.env.NEXT_PUBLIC_BASE_URL,
+  ]) {
+    const origin = originFromEnvUrl(raw);
+    if (origin && envOriginAppliesToRequest(origin, req)) {
+      return origin;
+    }
+  }
+  return null;
+}
+
+function assertProductionRedirectHost(uri: string): void {
+  if (process.env.NODE_ENV !== "production") return;
+  const host = new URL(uri).hostname;
+  if (isLocalHost(host)) {
+    throw new Error(
+      "GOOGLE_REDIRECT_URI must not use localhost in production",
+    );
+  }
+}
+
+/** Redact secrets and truncate Google error bodies for logs. */
+export function redactOAuthLogMessage(text: string): string {
+  return text
+    .replace(/client_secret=[^&\s]+/gi, "client_secret=[REDACTED]")
+    .replace(/"client_secret"\s*:\s*"[^"]+"/gi, '"client_secret":"[REDACTED]"')
+    .slice(0, 500);
 }
 
 /**
@@ -116,7 +160,7 @@ function publicRequestProto(host: string, forwardedProto: string | undefined): s
  * - Fallback: `req.url` origin (may be wrong when Next proxies to lenra-api over http)
  */
 export function requestOrigin(req: Request): string {
-  const fromEnv = envPublicOrigin();
+  const fromEnv = envPublicOriginForRequest(req);
   if (fromEnv) return fromEnv;
 
   const forwardedHost = req.headers
@@ -178,15 +222,21 @@ function assertOAuthCallbackRedirectUri(uri: string): string {
   return normalized;
 }
 
-export function getGoogleRedirectUri(_req: Request): string {
+export function getGoogleRedirectUri(req: Request): string {
   const rawExplicit = process.env.GOOGLE_REDIRECT_URI;
   if (rawExplicit?.trim()) {
-    return assertOAuthCallbackRedirectUri(normalizeEnvValue(rawExplicit));
+    const uri = assertOAuthCallbackRedirectUri(normalizeEnvValue(rawExplicit));
+    if (envOriginAppliesToRequest(new URL(uri).origin, req)) {
+      assertProductionRedirectHost(uri);
+      return uri;
+    }
   }
 
-  return assertOAuthCallbackRedirectUri(
-    new URL(GOOGLE_CALLBACK_PATH, requestOrigin(_req)).toString(),
+  const uri = assertOAuthCallbackRedirectUri(
+    new URL(GOOGLE_CALLBACK_PATH, requestOrigin(req)).toString(),
   );
+  assertProductionRedirectHost(uri);
+  return uri;
 }
 
 /** Redirect URI from signed state (callback), or derived from the request. */
@@ -200,10 +250,15 @@ export function resolveGoogleRedirectUriForCallback(
   return getGoogleRedirectUri(req);
 }
 
-export function buildGoogleAuthUrl(state: string, req: Request): string {
+export function buildGoogleAuthUrl(
+  state: string,
+  req: Request,
+  redirectUri?: string,
+): string {
+  const resolvedRedirect = redirectUri ?? getGoogleRedirectUri(req);
   const url = new URL(GOOGLE_AUTH_URL);
   url.searchParams.set("client_id", requireEnv("GOOGLE_CLIENT_ID"));
-  url.searchParams.set("redirect_uri", getGoogleRedirectUri(req));
+  url.searchParams.set("redirect_uri", resolvedRedirect);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", SCOPES.join(" "));
   url.searchParams.set("state", state);
@@ -238,11 +293,14 @@ export async function exchangeGoogleCode(
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
+    signal: AbortSignal.timeout(GOOGLE_HTTP_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Google token exchange failed (${res.status}): ${text}`);
+    throw new Error(
+      `Google token exchange failed (${res.status}): ${redactOAuthLogMessage(text)}`,
+    );
   }
   return res.json();
 }
@@ -252,10 +310,13 @@ export async function fetchGoogleProfile(
 ): Promise<GoogleProfile> {
   const res = await fetch(GOOGLE_USERINFO_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(GOOGLE_HTTP_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Google userinfo failed (${res.status}): ${text}`);
+    throw new Error(
+      `Google userinfo failed (${res.status}): ${redactOAuthLogMessage(text)}`,
+    );
   }
   return res.json();
 }
@@ -263,7 +324,9 @@ export async function fetchGoogleProfile(
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 function oauthStateSecret(): Buffer {
-  const secret = process.env.AUTH_SECRET;
+  const secret = process.env.AUTH_SECRET
+    ? normalizeEnvValue(process.env.AUTH_SECRET)
+    : "";
   if (!secret || secret.length < 32) {
     throw new Error(
       "AUTH_SECRET env var is missing or too short (need at least 32 chars).",
@@ -410,6 +473,13 @@ export function clearGoogleOAuthCookiesOnResponse(
   ]) {
     response.cookies.set(name, "", { ...opts, maxAge: 0 });
   }
+}
+
+/** Safe relative post-login path for signed OAuth state (blocks open redirects). */
+export function sanitizeOAuthNext(raw: string | null | undefined): string {
+  const n = typeof raw === "string" ? raw.trim() : "";
+  if (n.startsWith("/") && !n.startsWith("//")) return n;
+  return "/";
 }
 
 /** Build same-origin redirect URLs (like the original `new URL(path, req.url)`). */

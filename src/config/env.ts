@@ -1,3 +1,15 @@
+/** Trim and strip one layer of surrounding quotes (common in Docker/K8s secrets). */
+export function normalizeEnvValue(raw: string): string {
+  let v = raw.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
