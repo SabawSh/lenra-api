@@ -8,7 +8,7 @@
  * rarity scoring (Phase 1).
  */
 
-import { CORE_VOCABULARY_EXPANDED } from "./lexicons/coreVocabulary";
+import { CORE_VOCABULARY_EXPANDED } from "./lexicons/coreVocabularyExpanded";
 
 /**
  * High-frequency core vocabulary for English listening exercises.

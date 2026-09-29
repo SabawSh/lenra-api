@@ -1,4 +1,4 @@
-import { CONTRACTIONS } from "../../../../lenra-content-pipeline/src/difficulty/constants";
+import { CONTRACTIONS } from "@/lib/dictionary/difficultyConstants";
 import { isExcludedCoreVocabularyForm } from "@/lib/dictionary/vocabularyCorePolicy";
 
 function normalizeLookupForm(value: string): string {

@@ -19,12 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: |
-          if [ ! -f vendor/lenra-content-pipeline/src/difficulty/constants.ts ]; then
-            echo "::error::vendor/lenra-content-pipeline missing — run cp from lenra-content-pipeline (see vendor/lenra-content-pipeline/README.md)"
-            exit 1
-          fi
-          docker build -t ${IMAGE_NAME}:${{ github.sha }} .
+        run: docker build -t ${IMAGE_NAME}:${{ github.sha }} .
 
       - name: Save Docker image
         run: |

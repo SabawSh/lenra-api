@@ -1,4 +1,4 @@
-import { CORE_VOCABULARY } from "../../../../lenra-content-pipeline/src/difficulty/constants";
+import { CORE_VOCABULARY } from "@/lib/dictionary/difficultyConstants";
 
 /**
  * Repair rare AI lemma truncations where surface === lemma + "d" and lemma
