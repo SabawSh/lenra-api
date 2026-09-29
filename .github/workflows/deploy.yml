@@ -18,18 +18,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout content pipeline (imports required at runtime)
-        uses: actions/checkout@v4
-        with:
-          repository: SabawSh/lenra-content-pipeline
-          path: lenra-content-pipeline
-          ref: main
-        continue-on-error: true
-
       - name: Build Docker image
         run: |
-          if [ ! -f lenra-content-pipeline/src/difficulty/constants.ts ]; then
-            echo "::error::lenra-content-pipeline checkout missing — content-import routes need /lenra-content-pipeline in the image"
+          if [ ! -f vendor/lenra-content-pipeline/src/difficulty/constants.ts ]; then
+            echo "::error::vendor/lenra-content-pipeline missing — run cp from lenra-content-pipeline (see vendor/lenra-content-pipeline/README.md)"
             exit 1
           fi
           docker build -t ${IMAGE_NAME}:${{ github.sha }} .
