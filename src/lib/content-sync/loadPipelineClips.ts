@@ -62,9 +62,9 @@ export function parsePipelineClipsDocument(
       throw new Error(`clips.json: clip[${i}] is not an object`);
     }
     const c = item as Record<string, unknown>;
-    const canonicalKey = String(c.canonicalKey ?? "").trim();
+    const canonicalKey = String(c.canonicalKey ?? c.id ?? "").trim();
     if (!canonicalKey) {
-      throw new Error(`clips.json: clip[${i}] missing canonicalKey`);
+      throw new Error(`clips.json: clip[${i}] missing canonicalKey or id`);
     }
     const text = String(c.text ?? "");
     if (!text.trim()) {

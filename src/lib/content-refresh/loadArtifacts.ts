@@ -39,28 +39,54 @@ function optionalNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseTranslationRow(
+  row: Record<string, unknown>,
+  label: string,
+): TranslationEntry {
+  const canonicalKey =
+    optionalString(row.canonicalKey) ?? optionalString(row.id);
+  const translation = optionalString(row.translation);
+  if (!canonicalKey) {
+    throw new Error(`${label} missing canonicalKey or id`);
+  }
+  if (!translation) {
+    throw new Error(`${label} missing translation`);
+  }
+  return {
+    canonicalKey,
+    sourceText: String(row.sourceText ?? row.text ?? ""),
+    translation,
+    provider: optionalString(row.provider),
+    providerModel: optionalString(row.providerModel),
+    translatedAt: optionalString(row.translatedAt),
+  };
+}
+
+/** Pipeline `translations.json` is a top-level array; legacy admin bundle uses `{ entries: [] }`. */
 export function parseTranslationsDocument(raw: unknown): TranslationEntry[] {
+  if (Array.isArray(raw)) {
+    const out: TranslationEntry[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      out.push(
+        parseTranslationRow(
+          asRecord(raw[i], `translations.json[${i}]`),
+          `translations.json[${i}]`,
+        ),
+      );
+    }
+    return out;
+  }
+
   const doc = asRecord(raw, "translations.json");
   const entries = asArray(doc.entries, "translations.json.entries");
   const out: TranslationEntry[] = [];
   for (let i = 0; i < entries.length; i++) {
-    const row = asRecord(entries[i], `translations.json.entries[${i}]`);
-    const canonicalKey = optionalString(row.canonicalKey);
-    const translation = optionalString(row.translation);
-    if (!canonicalKey) {
-      throw new Error(`translations.json.entries[${i}] missing canonicalKey`);
-    }
-    if (!translation) {
-      throw new Error(`translations.json.entries[${i}] missing translation`);
-    }
-    out.push({
-      canonicalKey,
-      sourceText: String(row.sourceText ?? ""),
-      translation,
-      provider: optionalString(row.provider),
-      providerModel: optionalString(row.providerModel),
-      translatedAt: optionalString(row.translatedAt),
-    });
+    out.push(
+      parseTranslationRow(
+        asRecord(entries[i], `translations.json.entries[${i}]`),
+        `translations.json.entries[${i}]`,
+      ),
+    );
   }
   return out;
 }

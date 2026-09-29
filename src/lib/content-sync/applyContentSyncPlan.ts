@@ -212,17 +212,17 @@ export async function applyContentSyncPlanOnConnection(
     );
   }
 
-  const [allRows] = await conn.query<RowDataPacket[]>(
-    `SELECT id FROM parts WHERE episode_id = ? ORDER BY \`order\` ASC, id ASC`,
-    [plan.episodeId],
+  // Bump every part order by a large delta so final orders 1..n cannot collide
+  // with rows not yet updated. Sequential temp ids (10_000_000, 10_000_001, …)
+  // fail when a prior failed import left parts already in that range.
+  await conn.execute<ResultSetHeader>(
+    `
+    UPDATE parts
+    SET \`order\` = \`order\` + ?
+    WHERE episode_id = ?
+    `,
+    [CONTENT_SYNC_TEMP_ORDER_BASE, plan.episodeId],
   );
-  let temp = CONTENT_SYNC_TEMP_ORDER_BASE;
-  for (const row of allRows) {
-    await conn.execute<ResultSetHeader>(
-      `UPDATE parts SET \`order\` = ? WHERE id = ?`,
-      [temp++, String(row.id)],
-    );
-  }
 
   for (const match of plan.matches) {
     const clip = clipsByOrder.get(match.pipelineOrder);

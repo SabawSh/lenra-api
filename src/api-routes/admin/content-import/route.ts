@@ -209,16 +209,26 @@ export async function POST(req: Request) {
       ...meta,
     });
 
+    const dupEntry =
+      meta.code === "ER_DUP_ENTRY" || message.includes("Duplicate entry");
+
     const status =
       message.includes("too large") || message.includes("Total upload")
         ? 413
-        : message.includes("required") ||
-            message.includes("invalid") ||
-            message.includes("not present") ||
-            message.includes("confirmReplace") ||
-            message.includes("already has")
-          ? 400
-          : 500;
+        : dupEntry
+          ? 409
+          : message.includes("required") ||
+              message.includes("invalid") ||
+              message.includes("expected") ||
+              message.includes("missing") ||
+              message.includes("not present") ||
+              message.includes("confirmReplace") ||
+              message.includes("already has") ||
+              message.includes("Use replace mode") ||
+              message.includes("Refusing Apply") ||
+              message.includes(".json")
+            ? 400
+            : 500;
 
     return NextResponse.json(
       {
