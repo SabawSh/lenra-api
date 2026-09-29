@@ -99,9 +99,8 @@ jobs:
           tar xzf "\${ARCHIVE}" -C "\${BUILD_DIR}"
           rm -f "\${ARCHIVE}"
 
-          export DOCKER_BUILDKIT=1
+          # Classic builder (no buildx required on the VPS).
           docker build \\
-            --cache-from "\${CONTAINER}:latest" \\
             -t "\${IMAGE}" \\
             -t "\${CONTAINER}:latest" \\
             "\${BUILD_DIR}"
