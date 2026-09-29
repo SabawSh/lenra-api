@@ -1,7 +1,8 @@
 name: Lenra API CI
 
-# Production deploy is manual on the VPS — see docs/deploy-manual.md
-# Do not add SSH deploy steps here.
+# CI runs on push/PR (and optional manual workflow_dispatch re-run).
+# Production is NEVER deployed from this workflow automatically.
+# VPS manual deploy: ./scripts/deploy.sh — see docs/deploy-manual.md
 
 on:
   push:
@@ -16,7 +17,9 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  ci:
+    name: CI
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -38,3 +41,16 @@ jobs:
 
       - name: Generate route registry (sanity)
         run: npm run generate:routes
+
+  deploy-production:
+    name: Production deploy
+    needs: ci
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Production is manual on the VPS
+        run: |
+          echo "::notice title=Manual production deploy::This workflow does not SSH or run Docker on the VPS."
+          echo "On the server: cd /home/ubuntu/projects/lenra-api && ./scripts/deploy.sh"
+          echo "See docs/deploy-manual.md for rollback and cleanup."
