@@ -66,6 +66,28 @@ jobs:
           ARCHIVE="${DEPLOY_STAGING_DIR}/${IMAGE_NAME}.tar.gz"
           IMAGE_TAG="${IMAGE_TAG}"
           IMAGE_NAME="${IMAGE_NAME}"
+          MIN_FREE_MB=1800
+
+          echo "=== Disk before deploy ==="
+          df -h / /var/lib/docker "${DEPLOY_STAGING_DIR}" 2>/dev/null || df -h
+          docker system df || true
+
+          # Failed deploys often leave large tarballs and duplicate images on disk.
+          find "${DEPLOY_STAGING_DIR}" -maxdepth 1 -name "\${IMAGE_NAME}*.tar.gz" ! -path "\$ARCHIVE" -delete 2>/dev/null || true
+
+          docker stop "\${IMAGE_NAME}-old" 2>/dev/null || true
+          docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
+          docker image prune -af --filter "until=72h" || true
+          docker builder prune -af 2>/dev/null || true
+
+          avail=\$(df -m /var/lib/docker 2>/dev/null | awk 'NR==2 {print \$4}' || df -m / | awk 'NR==2 {print \$4}')
+          echo "Docker/root free space: \${avail}MB (need >= \${MIN_FREE_MB}MB before docker load)"
+          if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
+            echo "ERROR: not enough disk space to docker load — free space on the server and re-run deploy."
+            df -h
+            docker system df
+            exit 1
+          fi
 
           gunzip -c "\$ARCHIVE" | docker load
 
@@ -86,4 +108,6 @@ jobs:
           docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
           rm -f "\$ARCHIVE"
           docker image prune -af --filter "until=168h"
+          echo "=== Disk after deploy ==="
+          df -h / /var/lib/docker 2>/dev/null || df -h
           EOF
