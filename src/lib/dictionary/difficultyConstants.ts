@@ -4,17 +4,12 @@
  * CORE_VOCABULARY — shallow function/high-frequency set used by *learning*
  * vocabulary exclusion (do not expand casually; it gates teachable items).
  *
- * HIGH_FREQUENCY_VOCABULARY — broader A1–A2 set used only by difficulty
- * rarity scoring (Phase 1).
  */
-
-import { CORE_VOCABULARY_EXPANDED } from "./lexicons/coreVocabularyExpanded";
 
 /**
  * High-frequency core vocabulary for English listening exercises.
  * Words outside this set (excluding proper nouns) contribute to rarity scoring
- * ONLY when also absent from HIGH_FREQUENCY_VOCABULARY — prefer that set in
- * difficulty scorers. This shallow set remains for learning vocab exclusion.
+ * This shallow set is used for learning vocab exclusion.
  */
 export const CORE_VOCABULARY = new Set([
   "a",
@@ -163,34 +158,6 @@ export const CORE_VOCABULARY = new Set([
   "yes",
   "you",
   "your",
-]);
-
-/** Broader A1–A2 frequency set for difficulty rarity only. */
-export const HIGH_FREQUENCY_VOCABULARY = new Set(CORE_VOCABULARY_EXPANDED);
-
-export {
-  DOMAIN_LEMMA_TO_BUCKET,
-  DOMAIN_VOCABULARY,
-  type DomainBucket,
-} from "./lexicons/domainVocabulary";
-
-/** Known advanced / low-frequency words add extra weight when present. */
-export const ADVANCED_VOCABULARY = new Set([
-  "approximately",
-  "consequently",
-  "deliberately",
-  "fundamentally",
-  "hypothesis",
-  "inevitable",
-  "nevertheless",
-  "nonetheless",
-  "phenomenon",
-  "presumably",
-  "significant",
-  "subsequently",
-  "ultimately",
-  "unfortunately",
-  "whereas",
 ]);
 
 export const CONTRACTIONS = new Set([
