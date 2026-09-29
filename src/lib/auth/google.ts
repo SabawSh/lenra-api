@@ -43,34 +43,77 @@ function requireEnv(name: string): string {
 
 const GOOGLE_CALLBACK_PATH = "/api/auth/google/callback";
 
+function isLocalHost(host: string): boolean {
+  const h = host.split(":")[0]?.toLowerCase() ?? "";
+  return (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h.endsWith(".local") ||
+    h === "0.0.0.0"
+  );
+}
+
+function normalizePublicOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    if (
+      process.env.NODE_ENV === "production" &&
+      url.protocol === "http:" &&
+      !isLocalHost(url.hostname)
+    ) {
+      url.protocol = "https:";
+      return url.origin;
+    }
+    return url.origin;
+  } catch {
+    return origin;
+  }
+}
+
+function originFromEnvUrl(raw: string | undefined): string | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  try {
+    return normalizePublicOrigin(new URL(value).origin);
+  } catch {
+    return null;
+  }
+}
+
 /** Canonical public origin from env (production), or null to derive from the request. */
 function envPublicOrigin(): string | null {
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim();
-  if (redirectUri) {
-    try {
-      return new URL(redirectUri).origin;
-    } catch {
-      /* invalid URL — fall through */
-    }
-  }
+  return (
+    originFromEnvUrl(process.env.GOOGLE_REDIRECT_URI) ??
+    originFromEnvUrl(process.env.API_PUBLIC_URL) ??
+    originFromEnvUrl(process.env.NEXT_PUBLIC_BASE_URL)
+  );
+}
 
-  const base = process.env.NEXT_PUBLIC_BASE_URL?.trim();
-  if (base) {
-    try {
-      return new URL(base).origin;
-    } catch {
-      /* invalid URL — fall through */
+/**
+ * Scheme for OAuth redirect URIs when the request is proxied without reliable TLS headers.
+ * Google requires an exact match with Console-registered URIs (usually https in production).
+ */
+function publicRequestProto(host: string, forwardedProto: string | undefined): string {
+  const proto = forwardedProto?.toLowerCase();
+  if (proto === "http" || proto === "https") {
+    if (
+      process.env.NODE_ENV === "production" &&
+      proto === "http" &&
+      !isLocalHost(host)
+    ) {
+      return "https";
     }
+    return proto;
   }
-
-  return null;
+  if (isLocalHost(host)) return "http";
+  return process.env.NODE_ENV === "production" ? "https" : "http";
 }
 
 /**
  * Public origin for this request.
- * - Production: from GOOGLE_REDIRECT_URI or NEXT_PUBLIC_BASE_URL
- * - Local dev fallback: from `req.url` → http://localhost:3000
- * - Behind nginx fallback: X-Forwarded-Host / X-Forwarded-Proto
+ * - Prefer GOOGLE_REDIRECT_URI, API_PUBLIC_URL, or NEXT_PUBLIC_BASE_URL
+ * - Behind proxy: X-Forwarded-Host / X-Forwarded-Proto (https assumed in production)
+ * - Fallback: `req.url` origin (may be wrong when Next proxies to lenra-api over http)
  */
 export function requestOrigin(req: Request): string {
   const fromEnv = envPublicOrigin();
@@ -85,16 +128,44 @@ export function requestOrigin(req: Request): string {
     ?.split(",")[0]
     ?.trim();
 
-  if (forwardedHost && forwardedProto) {
-    return `${forwardedProto}://${forwardedHost}`;
+  if (forwardedHost) {
+    const proto = publicRequestProto(forwardedHost, forwardedProto);
+    return `${proto}://${forwardedHost}`;
   }
 
-  return new URL(req.url).origin;
+  const origin = new URL(req.url).origin;
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (
+      process.env.NODE_ENV === "production" &&
+      protocol === "http:" &&
+      !isLocalHost(hostname)
+    ) {
+      return `https://${hostname}${new URL(origin).port ? `:${new URL(origin).port}` : ""}`;
+    }
+  } catch {
+    /* keep origin */
+  }
+  return origin;
 }
 
 export function getGoogleRedirectUri(_req: Request): string {
   const explicit = process.env.GOOGLE_REDIRECT_URI?.trim();
-  if (explicit) return explicit;
+  if (explicit) {
+    try {
+      const url = new URL(explicit);
+      if (
+        process.env.NODE_ENV === "production" &&
+        url.protocol === "http:" &&
+        !isLocalHost(url.hostname)
+      ) {
+        url.protocol = "https:";
+      }
+      return url.toString();
+    } catch {
+      return explicit;
+    }
+  }
 
   return new URL(GOOGLE_CALLBACK_PATH, requestOrigin(_req)).toString();
 }
