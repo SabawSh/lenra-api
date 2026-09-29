@@ -60,6 +60,7 @@ import type {
   VocabularySenseEntry,
 } from "./types";
 import { buildContentRefreshValidation } from "./validateRefresh";
+import { ContentImportRunTimer } from "@/lib/admin/contentImportDebug";
 import { buildClipDictionaryLemmaInventory } from "@/lib/dictionary/buildClipDictionaryLemmaInventory";
 import { ensureDictionaryCoverageForLemmas } from "@/lib/dictionary/ensureDictionaryCoverage";
 
@@ -542,6 +543,23 @@ export async function runContentRefresh(
     );
   }
 
+  const runTimer = new ContentImportRunTimer(params.episodeId, false);
+  const vocabularyOccurrenceRows = vocabForClips.reduce(
+    (n, e) => n + e.occurrences.length,
+    0,
+  );
+  runTimer.phase("apply-start", {
+    pipelineClips: clips.length,
+    translations: translations.length,
+    vocabularySenses: vocabularySenses.length,
+    vocabularyOccurrenceEntries: vocabForClips.length,
+    vocabularyOccurrenceRows,
+    grammarCatalogEntries: grammarCatalog.length,
+    grammarOccurrenceEntries: grammarOccurrences.length,
+    progressPreservingReplace,
+    existingPartCount,
+  });
+
   const conn = await pool.getConnection();
   let partsDeleted = 0;
   let partsInserted = 0;
@@ -564,6 +582,7 @@ export async function runContentRefresh(
 
   try {
     await conn.beginTransaction();
+    runTimer.phase("transaction-open");
 
     if (progressPreservingReplace && existingPartCount > 0) {
       const existingParts = await listPartsForContentSync(params.episodeId);
@@ -598,6 +617,11 @@ export async function runContentRefresh(
       // Rebuild content attachments on active parts only.
       await deleteContentAttachmentsForActiveParts(params.episodeId, conn);
       await deleteMaterializedSectionsForEpisode(params.episodeId, conn);
+      runTimer.phase("parts-sync-complete", {
+        matches: applyPlan.matches.length,
+        inserts: applyPlan.inserts.length,
+        retires: applyPlan.retires.length,
+      });
     } else {
       // Empty episode insert (new content or replace on empty).
       partsInserted = await insertPartsFromClips(
@@ -606,6 +630,7 @@ export async function runContentRefresh(
         conn,
       );
       console.log(`Inserted ${partsInserted} parts`);
+      runTimer.phase("parts-insert-complete", { partsInserted });
     }
 
     if (translations.length > 0) {
@@ -617,6 +642,7 @@ export async function runContentRefresh(
       console.log(
         `Imported ${translationResult.imported} caption translations (fa)`,
       );
+      runTimer.phase("translations-complete", translationResult);
     }
 
     if (vocabularySenses.length > 0) {
@@ -625,6 +651,9 @@ export async function runContentRefresh(
         conn,
       );
       console.log(`Upserted ${vocabularySensesUpserted} vocabulary senses`);
+      runTimer.phase("vocabulary-senses-complete", {
+        vocabularySensesUpserted,
+      });
     }
 
     if (vocabForClips.length > 0) {
@@ -638,6 +667,9 @@ export async function runContentRefresh(
       console.log(
         `Imported ${vocabularyOccurrencesImported} vocabulary occurrence row(s)`,
       );
+      runTimer.phase("vocabulary-occurrences-complete", {
+        vocabularyOccurrencesImported,
+      });
     }
 
     if (grammarCatalog.length > 0) {
@@ -646,6 +678,7 @@ export async function runContentRefresh(
         conn,
       );
       console.log(`Upserted ${grammarConceptsUpserted} grammar concepts`);
+      runTimer.phase("grammar-catalog-complete", { grammarConceptsUpserted });
     }
 
     if (grammarOccurrences.length > 0) {
@@ -664,6 +697,10 @@ export async function runContentRefresh(
             ? ` (${grammarStubConceptsCreated} stub concept(s))`
             : ""),
       );
+      runTimer.phase("grammar-occurrences-complete", {
+        grammarOccurrencesImported,
+        grammarStubConceptsCreated,
+      });
     }
 
     if (preservedPartIds.length > 0) {
@@ -675,6 +712,10 @@ export async function runContentRefresh(
       dictionaryInventory.totalWordTokenInstances;
     dictionaryCoverageEligibleLemmas =
       dictionaryInventory.eligibleLemmas.length;
+    runTimer.phase("dictionary-coverage-start", {
+      eligibleLemmas: dictionaryCoverageEligibleLemmas,
+      wordTokenInstances: dictionaryCoverageWordTokenInstances,
+    });
     const coverageResult = await ensureDictionaryCoverageForLemmas(
       conn,
       dictionaryInventory.eligibleLemmas.map((entry) => entry.lemma),
@@ -692,9 +733,14 @@ export async function runContentRefresh(
         `jobs created=${dictionaryCoverageJobsCreated}, ` +
         `duplicate jobs avoided=${dictionaryCoverageDuplicateJobsAvoided}`,
     );
+    runTimer.phase("dictionary-coverage-complete", coverageResult);
 
     await conn.commit();
+    runTimer.phase("transaction-committed");
   } catch (error) {
+    runTimer.phase("transaction-failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
     await conn.rollback();
     throw error;
   } finally {
@@ -715,6 +761,8 @@ export async function runContentRefresh(
         "learner progress UUIDs were not remapped or wiped by this replace.",
     );
   }
+
+  runTimer.phase("apply-complete");
 
   return {
     dryRun: false,

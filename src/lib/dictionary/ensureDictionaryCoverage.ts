@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 
+import { logContentImport } from "@/lib/admin/contentImportDebug";
 import { lemmatizeWord } from "@/lib/dictionary/lemmatizeWord";
 import { normalizeDictionaryLookupSurface } from "@/lib/dictionary/normalizeDictionaryLemma";
 
@@ -194,7 +195,14 @@ export async function ensureDictionaryCoverageForLemmas(
   let generationJobsCreated = 0;
   let duplicateJobsAvoided = 0;
 
-  for (const lemma of lemmas) {
+  for (let i = 0; i < lemmas.length; i++) {
+    const lemma = lemmas[i]!;
+    if (i > 0 && i % 100 === 0) {
+      logContentImport("dictionary-coverage", "progress", {
+        processed: i,
+        total: lemmas.length,
+      });
+    }
     let row = await fetchEntryStatus(conn, lemma, language);
     if (row && isEntryReady(row)) {
       alreadyCovered += 1;

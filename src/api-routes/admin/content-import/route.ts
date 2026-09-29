@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  ContentImportRunTimer,
   logContentImport,
   mysqlErrorMeta,
 } from "@/lib/admin/contentImportDebug";
@@ -13,6 +14,7 @@ import type { ContentRefreshArtifactBundle } from "@/lib/content-refresh/types";
 import { assertMediaUploadAllowed } from "@/lib/storage/upload-auth";
 
 export const runtime = "nodejs";
+/** Next.js/Vercel only — ignored when this handler runs under lenra-api (Hono). */
 export const maxDuration = 300;
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB per artifact
@@ -115,6 +117,7 @@ export async function POST(req: Request) {
     url.searchParams.get("preview") === "1";
 
   const contentLength = req.headers.get("content-length");
+  const requestTimer = new ContentImportRunTimer("pending", dryRun);
   logContentImport("import", "request", {
     dryRun,
     contentLength,
@@ -161,6 +164,11 @@ export async function POST(req: Request) {
     }
 
     const parsed = await parseMultipartArtifacts(form);
+    requestTimer.phase("multipart-parsed", {
+      episodeId: parsed.episodeId,
+      mode: parsed.mode,
+      bytesByField: parsed.bytesByField,
+    });
     logContentImport("import", "artifacts received", {
       episodeId: parsed.episodeId,
       mode: parsed.mode,
@@ -174,6 +182,7 @@ export async function POST(req: Request) {
         artifacts: parsed.artifacts,
         mode: parsed.mode,
       });
+      requestTimer.phase("preview-complete");
       return NextResponse.json({ ok: true, stage: "preview", result });
     }
 
@@ -198,6 +207,7 @@ export async function POST(req: Request) {
       );
     }
 
+    requestTimer.phase("import-complete");
     return NextResponse.json({ ok: true, stage: "imported", result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

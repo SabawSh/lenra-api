@@ -47,6 +47,29 @@ export function logContentImport(
   else console.info(line);
 }
 
+/** Phase timing for long-running import (grep docker logs for content-import:run). */
+export class ContentImportRunTimer {
+  private readonly startedMs = Date.now();
+  private lastMs = this.startedMs;
+
+  constructor(
+    private readonly episodeId: string,
+    private readonly dryRun: boolean,
+  ) {}
+
+  phase(phase: string, fields?: Record<string, unknown>): void {
+    const now = Date.now();
+    logContentImport("run", phase, {
+      episodeId: this.episodeId,
+      dryRun: this.dryRun,
+      elapsedMs: now - this.startedMs,
+      phaseMs: now - this.lastMs,
+      ...fields,
+    });
+    this.lastMs = now;
+  }
+}
+
 /** Episode + schema snapshot for admin import debugging (no secrets). */
 export async function getEpisodeImportContext(
   episodeId: string,
