@@ -107,16 +107,17 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           IMAGE_TAG: ${{ github.sha }}
-          GHCR_DEPLOY_TOKEN: ${{ secrets.GHCR_DEPLOY_TOKEN }}
-          GHCR_USER: ${{ steps.image.outputs.owner }}
+          # Optional long-lived PAT for manual pulls on the server; else job GITHUB_TOKEN.
+          GHCR_PAT: ${{ secrets.GHCR_DEPLOY_TOKEN || secrets.GITHUB_TOKEN }}
+          GHCR_LOGIN_USER: ${{ github.actor }}
         run: |
-          if [ -z "${GHCR_DEPLOY_TOKEN}" ]; then
-            echo "ERROR: Add repo secret GHCR_DEPLOY_TOKEN (classic PAT with read:packages) so the server can pull from GHCR."
+          if [ -z "${GHCR_PAT}" ]; then
+            echo "ERROR: No GHCR credentials (GITHUB_TOKEN missing — check workflow packages permission)."
             exit 1
           fi
 
-          echo "${GHCR_DEPLOY_TOKEN}" | ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "docker login ghcr.io -u ${GHCR_USER} --password-stdin"
+          echo "${GHCR_PAT}" | ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "docker login ghcr.io -u ${GHCR_LOGIN_USER} --password-stdin"
 
           ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
           set -euo pipefail
