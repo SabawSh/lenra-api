@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import {
+  logContentImport,
+  mysqlErrorMeta,
+} from "@/lib/admin/contentImportDebug";
+import {
   executeContentImport,
   previewContentImport,
   type ContentImportMode,
@@ -13,6 +17,7 @@ export const maxDuration = 300;
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB per artifact
 const MAX_TOTAL_BYTES = 140 * 1024 * 1024; // ~7 artifacts
+
 const FIELD_MAP = {
   clips: "clips",
   learningAnalysis: "learningAnalysis",
@@ -47,6 +52,7 @@ async function parseMultipartArtifacts(
   mode: ContentImportMode;
   confirmReplace: boolean;
   artifacts: ContentRefreshArtifactBundle;
+  bytesByField: Record<string, number>;
 }> {
   const episodeId = String(form.get("episodeId") ?? "").trim();
   if (!episodeId) {
@@ -65,6 +71,7 @@ async function parseMultipartArtifacts(
   }
 
   let totalBytes = clipsFile.size;
+  const bytesByField: Record<string, number> = { clips: clipsFile.size };
 
   const artifacts: ContentRefreshArtifactBundle = {
     clips: await readJsonFile(clipsFile, "clips.json"),
@@ -83,16 +90,17 @@ async function parseMultipartArtifacts(
     const value = form.get(field);
     if (value instanceof File && value.size > 0) {
       totalBytes += value.size;
+      bytesByField[field] = value.size;
       if (totalBytes > MAX_TOTAL_BYTES) {
         throw new Error(
-          `Total upload too large (max ${Math.floor(MAX_TOTAL_BYTES / (1024 * 1024))}MB combined)`,
+          `Total upload too large (max ${Math.floor(MAX_TOTAL_BYTES / (1024 * 1024))}MB combined, got ${Math.ceil(totalBytes / (1024 * 1024))}MB)`,
         );
       }
       artifacts[field] = await readJsonFile(value, `${field}.json`);
     }
   }
 
-  return { episodeId, mode, confirmReplace, artifacts };
+  return { episodeId, mode, confirmReplace, artifacts, bytesByField };
 }
 
 /**
@@ -101,25 +109,64 @@ async function parseMultipartArtifacts(
  * query: ?dryRun=1 for preview only
  */
 export async function POST(req: Request) {
-  const denied = await assertMediaUploadAllowed(req);
-  if (denied) return denied;
-
   const url = new URL(req.url);
   const dryRun =
     url.searchParams.get("dryRun") === "1" ||
     url.searchParams.get("preview") === "1";
 
+  const contentLength = req.headers.get("content-length");
+  logContentImport("import", "request", {
+    dryRun,
+    contentLength,
+    contentType: req.headers.get("content-type")?.split(";")[0],
+  });
+
   try {
+    const denied = await assertMediaUploadAllowed(req);
+    if (denied) return denied;
+
     const contentType = req.headers.get("content-type") ?? "";
     if (!contentType.includes("multipart/form-data")) {
       return NextResponse.json(
-        { error: "Expected multipart/form-data with artifact files" },
+        {
+          ok: false,
+          error: "Expected multipart/form-data with artifact files",
+          stage: dryRun ? "validation" : "import",
+        },
         { status: 400 },
       );
     }
 
-    const form = await req.formData();
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch (parseErr) {
+      const message =
+        parseErr instanceof Error ? parseErr.message : String(parseErr);
+      logContentImport("import", "formData parse failed", {
+        message,
+        contentLength,
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Could not read multipart body (often payload too large for Next.js/CDN proxy). " +
+            "Ensure proxyClientMaxBodySize and CDN upload limits allow ~160MB for admin import.",
+          detail: message,
+          stage: dryRun ? "validation" : "import",
+        },
+        { status: 413 },
+      );
+    }
+
     const parsed = await parseMultipartArtifacts(form);
+    logContentImport("import", "artifacts received", {
+      episodeId: parsed.episodeId,
+      mode: parsed.mode,
+      dryRun,
+      bytesByField: parsed.bytesByField,
+    });
 
     if (dryRun) {
       const result = await previewContentImport({
@@ -137,22 +184,31 @@ export async function POST(req: Request) {
       confirmReplace: parsed.confirmReplace,
     });
 
-    // Parts UUIDs changed — bust lean curriculum caches so Learn does not 404
-    // on stale part-order meta from the previous build.
     try {
       const { revalidateTag } = await import("next/cache");
       revalidateTag("videos", { expire: 0 });
       revalidateTag("episodes", { expire: 0 });
     } catch (error) {
-      console.warn(
-        "[content-import] cache revalidate skipped:",
-        error instanceof Error ? error.message : error,
+      logContentImport(
+        "import",
+        "cache revalidate skipped",
+        {
+          message: error instanceof Error ? error.message : String(error),
+        },
       );
     }
 
     return NextResponse.json({ ok: true, stage: "imported", result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const meta = mysqlErrorMeta(error);
+    logContentImport("import", "failed", {
+      dryRun,
+      message,
+      contentLength,
+      ...meta,
+    });
+
     const status =
       message.includes("too large") || message.includes("Total upload")
         ? 413
@@ -163,11 +219,14 @@ export async function POST(req: Request) {
             message.includes("already has")
           ? 400
           : 500;
+
     return NextResponse.json(
       {
         ok: false,
         error: message,
         stage: dryRun ? "validation" : "import",
+        mysqlCode: meta.code,
+        detail: meta.sqlMessage,
       },
       { status },
     );

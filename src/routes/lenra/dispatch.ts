@@ -80,7 +80,21 @@ lenraApiDispatch.all("*", async (c) => {
     });
     return response;
   } catch (error) {
-    console.error("[lenra-api] route error", url.pathname, error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[lenra-api] route error", url.pathname, message, error);
+    const isContentImport = url.pathname.startsWith(
+      "/api/admin/content-import",
+    );
+    if (isContentImport) {
+      return c.json(
+        {
+          ok: false,
+          error: message,
+          path: url.pathname,
+        },
+        500,
+      );
+    }
     return c.json({ error: "internal_error" }, 500);
   }
 });
