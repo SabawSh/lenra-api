@@ -37,6 +37,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
+            rm -f /tmp/lenra-api.tar.gz
             docker load < /tmp/lenra-api.tar.gz
 
             docker rm -f lenra-api 2>/dev/null || true
@@ -51,4 +52,4 @@ jobs:
 
             rm -f /tmp/lenra-api.tar.gz
 
-            docker image prune -f
+            docker image prune -af --filter "until=168h"
