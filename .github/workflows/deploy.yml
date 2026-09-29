@@ -1,137 +1,40 @@
-name: Deploy Lenra API
+name: Lenra API CI
+
+# Production deploy is manual on the VPS — see docs/deploy-manual.md
+# Do not add SSH deploy steps here.
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
-# Fast path: ship source tarball → docker build on the VPS (layer cache for npm ci).
-# Avoids GHCR push + multi-GB pull over SSH. Same safe rollout: health check, keep -old until OK.
 permissions:
   contents: read
 
-env:
-  CONTAINER_NAME: lenra-api
-  REMOTE_BUILD_DIR: /home/ubuntu/deploy-build/lenra-api
-  SSH_COMMON_OPTS: >-
-    -o BatchMode=yes
-    -o ServerAliveInterval=15
-    -o ServerAliveCountMax=120
-    -o TCPKeepAlive=yes
-    -o ConnectTimeout=30
-
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Pack source (docker context only)
-        run: |
-          git archive --format=tar HEAD \
-            Dockerfile .dockerignore package.json package-lock.json tsconfig.json \
-            shim src scripts \
-            | gzip -1 > lenra-api-src.tar.gz
-          ls -lh lenra-api-src.tar.gz
-
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          node-version: "20"
+          cache: npm
 
-      - name: Add deploy host to known_hosts
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Upload source and build on server
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          REMOTE_ARCHIVE="/tmp/lenra-api-src-${IMAGE_TAG}.tar.gz"
+      - name: Run tests
+        run: npm test
 
-          scp ${SSH_COMMON_OPTS} lenra-api-src.tar.gz \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_ARCHIVE}"
-
-          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
-          set -euo pipefail
-          CONTAINER="${CONTAINER_NAME}"
-          IMAGE_TAG="${IMAGE_TAG}"
-          IMAGE="\${CONTAINER}:\${IMAGE_TAG}"
-          BUILD_DIR="${REMOTE_BUILD_DIR}"
-          ARCHIVE="${REMOTE_ARCHIVE}"
-          MIN_FREE_MB=600
-
-          avail=\$(df -m / | awk 'NR==2 {print \$4}')
-          echo "Free disk: \${avail}MB (need >= \${MIN_FREE_MB}MB)"
-          if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
-            echo "Low disk — pruning unused Docker data once"
-            docker container prune -f || true
-            docker image prune -af || true
-            avail=\$(df -m / | awk 'NR==2 {print \$4}')
-            if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
-              echo "ERROR: not enough disk space for docker build"
-              df -h /
-              exit 1
-            fi
-          fi
-
-          if docker inspect "\${CONTAINER}" >/dev/null 2>&1; then
-            running=\$(docker inspect -f '{{.Config.Image}}' "\${CONTAINER}" 2>/dev/null || true)
-            if [ "\${running}" = "\${IMAGE}" ]; then
-              echo "Already running \${IMAGE} — skipping build"
-              curl --fail -s "http://127.0.0.1:4000/health" >/dev/null
-              rm -f "\${ARCHIVE}"
-              exit 0
-            fi
-          fi
-
-          rm -rf "\${BUILD_DIR}"
-          mkdir -p "\${BUILD_DIR}"
-          tar xzf "\${ARCHIVE}" -C "\${BUILD_DIR}"
-          rm -f "\${ARCHIVE}"
-
-          # Classic builder (no buildx required on the VPS).
-          docker build \\
-            -t "\${IMAGE}" \\
-            -t "\${CONTAINER}:latest" \\
-            "\${BUILD_DIR}"
-
-          docker stop "\${CONTAINER}-old" 2>/dev/null || true
-          docker rm -f "\${CONTAINER}-old" 2>/dev/null || true
-          docker stop "\${CONTAINER}" 2>/dev/null || true
-          docker rename "\${CONTAINER}" "\${CONTAINER}-old" 2>/dev/null || true
-
-          docker run -d \\
-            --name "\${CONTAINER}" \\
-            --restart unless-stopped \\
-            --network mysql-network \\
-            --env-file /home/ubuntu/projects/lenra-api/.env \\
-            -p 127.0.0.1:4000:4000 \\
-            "\${IMAGE}"
-
-          sleep 5
-          curl --fail "http://127.0.0.1:4000/health"
-
-          docker rm -f "\${CONTAINER}-old" 2>/dev/null || true
-
-          # Drop previous lenra-api tags except running + latest cache tag
-          KEEP_NEW=\$(docker inspect -f '{{.Image}}' "\${CONTAINER}")
-          docker images "\${CONTAINER}" --no-trunc --format '{{.ID}} {{.Tag}}' | while read -r id tag; do
-            if [ "\$id" = "\${KEEP_NEW}" ]; then continue; fi
-            if [ "\$tag" = "latest" ]; then continue; fi
-            docker rmi -f "\${CONTAINER}:\$tag" 2>/dev/null || true
-          done
-
-          rm -rf "\${BUILD_DIR}"
-          df -h /
-          docker system df || true
-          EOF
+      - name: Generate route registry (sanity)
+        run: npm run generate:routes
