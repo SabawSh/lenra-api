@@ -5,15 +5,14 @@ on:
     branches:
       - main
 
-# Push image to GHCR; server pulls by tag (no scp tarballs / docker load).
+# Fast path: ship source tarball → docker build on the VPS (layer cache for npm ci).
+# Avoids GHCR push + multi-GB pull over SSH. Same safe rollout: health check, keep -old until OK.
 permissions:
   contents: read
-  packages: write
 
 env:
   CONTAINER_NAME: lenra-api
-  REGISTRY: ghcr.io
-  # Keep long docker pull sessions alive through NAT/firewalls (avoid Broken pipe).
+  REMOTE_BUILD_DIR: /home/ubuntu/deploy-build/lenra-api
   SSH_COMMON_OPTS: >-
     -o BatchMode=yes
     -o ServerAliveInterval=15
@@ -24,37 +23,19 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve GHCR image name
-        id: image
+      - name: Pack source (docker context only)
         run: |
-          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
-          echo "IMAGE_REF=${REGISTRY}/${owner}/${CONTAINER_NAME}" >> "$GITHUB_ENV"
-          echo "GHCR image: ${REGISTRY}/${owner}/${CONTAINER_NAME}:${{ github.sha }}"
-
-      - name: Log in to GHCR (push)
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        run: |
-          if [ -z "${IMAGE_REF}" ]; then
-            echo "ERROR: IMAGE_REF is empty (Resolve GHCR image name step failed)."
-            exit 1
-          fi
-          docker build -t "${IMAGE_REF}:${{ github.sha }}" .
-          docker push "${IMAGE_REF}:${{ github.sha }}"
-          docker tag "${IMAGE_REF}:${{ github.sha }}" "${IMAGE_REF}:latest"
-          docker push "${IMAGE_REF}:latest"
+          git archive --format=tar HEAD \
+            Dockerfile .dockerignore package.json package-lock.json tsconfig.json \
+            shim src scripts \
+            | gzip -1 > lenra-api-src.tar.gz
+          ls -lh lenra-api-src.tar.gz
 
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
@@ -68,126 +49,65 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Free disk on deploy host
+      - name: Upload source and build on server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          REMOTE_ARCHIVE="/tmp/lenra-api-src-${IMAGE_TAG}.tar.gz"
+
+          scp ${SSH_COMMON_OPTS} lenra-api-src.tar.gz \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_ARCHIVE}"
+
           ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
           set -euo pipefail
           CONTAINER="${CONTAINER_NAME}"
-          IMAGE_REF="${IMAGE_REF}"
+          IMAGE_TAG="${IMAGE_TAG}"
+          IMAGE="\${CONTAINER}:\${IMAGE_TAG}"
+          BUILD_DIR="${REMOTE_BUILD_DIR}"
+          ARCHIVE="${REMOTE_ARCHIVE}"
+          MIN_FREE_MB=600
 
-          echo "=== Disk before cleanup ==="
-          df -h /
-          docker system df || true
+          avail=\$(df -m / | awk 'NR==2 {print \$4}')
+          echo "Free disk: \${avail}MB (need >= \${MIN_FREE_MB}MB)"
+          if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
+            echo "Low disk — pruning unused Docker data once"
+            docker container prune -f || true
+            docker image prune -af || true
+            avail=\$(df -m / | awk 'NR==2 {print \$4}')
+            if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
+              echo "ERROR: not enough disk space for docker build"
+              df -h /
+              exit 1
+            fi
+          fi
 
-          rm -f /home/ubuntu/deploy-staging/\${CONTAINER}.tar.gz 2>/dev/null || true
-          rm -f /home/ubuntu/deploy-staging/\${CONTAINER}*.tar.gz 2>/dev/null || true
+          if docker inspect "\${CONTAINER}" >/dev/null 2>&1; then
+            running=\$(docker inspect -f '{{.Config.Image}}' "\${CONTAINER}" 2>/dev/null || true)
+            if [ "\${running}" = "\${IMAGE}" ]; then
+              echo "Already running \${IMAGE} — skipping build"
+              curl --fail -s "http://127.0.0.1:4000/health" >/dev/null
+              rm -f "\${ARCHIVE}"
+              exit 0
+            fi
+          fi
+
+          rm -rf "\${BUILD_DIR}"
+          mkdir -p "\${BUILD_DIR}"
+          tar xzf "\${ARCHIVE}" -C "\${BUILD_DIR}"
+          rm -f "\${ARCHIVE}"
+
+          export DOCKER_BUILDKIT=1
+          docker build \\
+            --cache-from "\${CONTAINER}:latest" \\
+            -t "\${IMAGE}" \\
+            -t "\${CONTAINER}:latest" \\
+            "\${BUILD_DIR}"
 
           docker stop "\${CONTAINER}-old" 2>/dev/null || true
           docker rm -f "\${CONTAINER}-old" 2>/dev/null || true
-
-          if docker inspect "\${CONTAINER}" >/dev/null 2>&1; then
-            KEEP=\$(docker inspect -f '{{.Image}}' "\${CONTAINER}")
-            for repo in "\${IMAGE_REF}" "\${CONTAINER}"; do
-              docker images "\${repo}" --no-trunc --format '{{.ID}}' 2>/dev/null | sort -u | while read -r id; do
-                if [ "\$id" != "\$KEEP" ]; then
-                  docker rmi -f "\$id" 2>/dev/null || true
-                fi
-              done
-            done
-          fi
-
-          docker container prune -f || true
-          docker image prune -af || true
-          docker builder prune -af 2>/dev/null || true
-
-          echo "=== Disk after cleanup ==="
-          df -h /
-          docker system df || true
-          EOF
-
-      - name: GHCR login on deploy host
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          GHCR_PAT: ${{ secrets.GHCR_DEPLOY_TOKEN || secrets.GITHUB_TOKEN }}
-          GHCR_LOGIN_USER: ${{ github.actor }}
-        run: |
-          if [ -z "${GHCR_PAT}" ]; then
-            echo "ERROR: No GHCR credentials (GITHUB_TOKEN missing — check workflow packages permission)."
-            exit 1
-          fi
-          echo "${GHCR_PAT}" | ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "docker login ghcr.io -u ${GHCR_LOGIN_USER} --password-stdin"
-
-      - name: Pull image on deploy host
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          IMAGE="${IMAGE_REF}:${IMAGE_TAG}"
-          MIN_FREE_MB=800
-
-          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "df -h /; avail=\$(df -m / | awk 'NR==2 {print \$4}'); test \${avail} -ge ${MIN_FREE_MB}"
-
-          # Pull in background so a dropped SSH session does not abort docker pull mid-layer.
-          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
-          set -euo pipefail
-          IMAGE="${IMAGE}"
-          LOG=/tmp/lenra-api-docker-pull.log
-          PIDFILE=/tmp/lenra-api-docker-pull.pid
-
-          if docker image inspect "\${IMAGE}" >/dev/null 2>&1; then
-            echo "Image already present: \${IMAGE}"
-            exit 0
-          fi
-
-          rm -f "\${LOG}" "\${PIDFILE}"
-          nohup docker pull "\${IMAGE}" > "\${LOG}" 2>&1 &
-          echo \$! > "\${PIDFILE}"
-          echo "Started docker pull pid=\$(cat "\${PIDFILE}")"
-          EOF
-
-          echo "Waiting for docker pull (short SSH polls, up to ~15 min)..."
-          for i in $(seq 1 60); do
-            if ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-              "docker image inspect '${IMAGE}' >/dev/null 2>&1"; then
-              echo "Pull complete after ${i} poll(s)."
-              ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                "tail -n 20 /tmp/lenra-api-docker-pull.log 2>/dev/null || true"
-              exit 0
-            fi
-            if ! ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-              "test -f /tmp/lenra-api-docker-pull.pid && kill -0 \$(cat /tmp/lenra-api-docker-pull.pid) 2>/dev/null"; then
-              echo "ERROR: docker pull process stopped before image was ready."
-              ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                "tail -n 40 /tmp/lenra-api-docker-pull.log 2>/dev/null || true"
-              exit 1
-            fi
-            sleep 15
-          done
-
-          echo "ERROR: docker pull timed out after 15 minutes."
-          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "tail -n 40 /tmp/lenra-api-docker-pull.log 2>/dev/null || true"
-          exit 1
-
-      - name: Rollout container on deploy host
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
-          set -euo pipefail
-          CONTAINER="${CONTAINER_NAME}"
-          IMAGE="${IMAGE_REF}:${IMAGE_TAG}"
-
           docker stop "\${CONTAINER}" 2>/dev/null || true
           docker rename "\${CONTAINER}" "\${CONTAINER}-old" 2>/dev/null || true
 
@@ -203,8 +123,16 @@ jobs:
           curl --fail "http://127.0.0.1:4000/health"
 
           docker rm -f "\${CONTAINER}-old" 2>/dev/null || true
-          docker image prune -af || true
-          echo "=== Disk after deploy ==="
+
+          # Drop previous lenra-api tags except running + latest cache tag
+          KEEP_NEW=\$(docker inspect -f '{{.Image}}' "\${CONTAINER}")
+          docker images "\${CONTAINER}" --no-trunc --format '{{.ID}} {{.Tag}}' | while read -r id tag; do
+            if [ "\$id" = "\${KEEP_NEW}" ]; then continue; fi
+            if [ "\$tag" = "latest" ]; then continue; fi
+            docker rmi -f "\${CONTAINER}:\$tag" 2>/dev/null || true
+          done
+
+          rm -rf "\${BUILD_DIR}"
           df -h /
           docker system df || true
           EOF
