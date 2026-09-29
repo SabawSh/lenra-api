@@ -4,7 +4,9 @@ import {
   clearGoogleOAuthCookiesOnResponse,
   exchangeGoogleCode,
   fetchGoogleProfile,
+  getGoogleRedirectUri,
   oauthRedirect,
+  resolveGoogleRedirectUriForCallback,
   verifySignedOAuthState,
   type GoogleOAuthIntent,
 } from "@/lib/auth/google";
@@ -58,8 +60,10 @@ export async function GET(req: Request) {
   if (!code || !stateParam) return failureRedirect("missing_params");
   if (!signed) return failureRedirect("bad_state");
 
+  const redirectUri = resolveGoogleRedirectUriForCallback(req, signed);
+
   try {
-    const tokens = await exchangeGoogleCode(code, req);
+    const tokens = await exchangeGoogleCode(code, req, redirectUri);
     const profile = await fetchGoogleProfile(tokens.access_token);
     if (!profile.sub) return failureRedirect("missing_sub");
 
@@ -179,7 +183,33 @@ export async function GET(req: Request) {
     await setSessionForUserOnResponse(res, user);
     return res;
   } catch (err) {
-    console.error("[google callback]", err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[google callback]", message, err);
+
+    if (message.includes("Google token exchange failed")) {
+      console.error("[google callback] redirect_uri used:", redirectUri);
+      const lower = message.toLowerCase();
+      if (lower.includes("redirect_uri_mismatch")) {
+        return failureRedirect("redirect_uri");
+      }
+      if (lower.includes("invalid_client")) {
+        return failureRedirect("invalid_client");
+      }
+      if (lower.includes("invalid_grant")) {
+        return failureRedirect("expired_code");
+      }
+      return failureRedirect("token");
+    }
+    if (
+      message.includes("ECONNREFUSED") ||
+      message.includes("ER_ACCESS_DENIED") ||
+      message.includes("connect")
+    ) {
+      console.error("[google callback] database or upstream failure");
+    }
+    if (message.includes("Google userinfo failed")) {
+      return failureRedirect("profile");
+    }
     return failureRedirect("exception");
   }
 }

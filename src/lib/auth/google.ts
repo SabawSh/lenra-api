@@ -149,25 +149,55 @@ export function requestOrigin(req: Request): string {
   return origin;
 }
 
-export function getGoogleRedirectUri(_req: Request): string {
-  const explicit = process.env.GOOGLE_REDIRECT_URI?.trim();
-  if (explicit) {
-    try {
-      const url = new URL(explicit);
-      if (
-        process.env.NODE_ENV === "production" &&
-        url.protocol === "http:" &&
-        !isLocalHost(url.hostname)
-      ) {
-        url.protocol = "https:";
-      }
-      return url.toString();
-    } catch {
-      return explicit;
+function normalizeRedirectUri(uri: string): string {
+  try {
+    const url = new URL(uri);
+    if (
+      process.env.NODE_ENV === "production" &&
+      url.protocol === "http:" &&
+      !isLocalHost(url.hostname)
+    ) {
+      url.protocol = "https:";
     }
+    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.slice(0, -1);
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return uri;
+  }
+}
+
+function assertOAuthCallbackRedirectUri(uri: string): string {
+  const normalized = normalizeRedirectUri(uri);
+  const path = new URL(normalized).pathname;
+  if (path !== GOOGLE_CALLBACK_PATH) {
+    throw new Error("Invalid Google OAuth redirect_uri path");
+  }
+  return normalized;
+}
+
+export function getGoogleRedirectUri(_req: Request): string {
+  const rawExplicit = process.env.GOOGLE_REDIRECT_URI;
+  if (rawExplicit?.trim()) {
+    return assertOAuthCallbackRedirectUri(normalizeEnvValue(rawExplicit));
   }
 
-  return new URL(GOOGLE_CALLBACK_PATH, requestOrigin(_req)).toString();
+  return assertOAuthCallbackRedirectUri(
+    new URL(GOOGLE_CALLBACK_PATH, requestOrigin(_req)).toString(),
+  );
+}
+
+/** Redirect URI from signed state (callback), or derived from the request. */
+export function resolveGoogleRedirectUriForCallback(
+  req: Request,
+  signed: SignedOAuthStatePayload | null,
+): string {
+  if (signed?.redirectUri) {
+    return assertOAuthCallbackRedirectUri(signed.redirectUri);
+  }
+  return getGoogleRedirectUri(req);
 }
 
 export function buildGoogleAuthUrl(state: string, req: Request): string {
@@ -185,16 +215,22 @@ export function buildGoogleAuthUrl(state: string, req: Request): string {
 export async function exchangeGoogleCode(
   code: string,
   req: Request,
+  redirectUri?: string,
 ): Promise<{
   access_token: string;
   id_token?: string;
   expires_in: number;
 }> {
+  const resolvedRedirect =
+    redirectUri != null
+      ? assertOAuthCallbackRedirectUri(redirectUri)
+      : getGoogleRedirectUri(req);
+
   const body = new URLSearchParams({
     code,
     client_id: requireEnv("GOOGLE_CLIENT_ID"),
     client_secret: requireEnv("GOOGLE_CLIENT_SECRET"),
-    redirect_uri: getGoogleRedirectUri(req),
+    redirect_uri: resolvedRedirect,
     grant_type: "authorization_code",
   });
 
@@ -256,6 +292,8 @@ function timingSafeEqualBase64Url(a: string, b: string): boolean {
 export interface SignedOAuthStatePayload {
   next?: string;
   intent?: GoogleOAuthIntent;
+  /** Exact redirect_uri sent to Google on /start (token exchange must match). */
+  redirectUri?: string;
 }
 
 /**
@@ -271,6 +309,7 @@ export function createSignedOAuthState(
       exp: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
       ...(payload.next ? { next: payload.next } : {}),
       ...(payload.intent ? { intent: payload.intent } : {}),
+      ...(payload.redirectUri ? { ru: payload.redirectUri } : {}),
     }),
   ).toString("base64url");
   return `${body}.${signOAuthStatePayload(body)}`;
@@ -296,6 +335,7 @@ export function verifySignedOAuthState(
       exp?: unknown;
       next?: unknown;
       intent?: unknown;
+      ru?: unknown;
     };
     if (typeof raw.n !== "string" || raw.n.length < 16) return null;
     if (
@@ -314,6 +354,13 @@ export function verifySignedOAuthState(
       raw.intent === "link_google_settings"
     ) {
       out.intent = raw.intent;
+    }
+    if (typeof raw.ru === "string" && raw.ru.length > 0) {
+      try {
+        out.redirectUri = assertOAuthCallbackRedirectUri(raw.ru);
+      } catch {
+        return null;
+      }
     }
     return out;
   } catch {
