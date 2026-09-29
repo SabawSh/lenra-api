@@ -40,6 +40,11 @@ export type EpisodeContentResetApplyResult = {
   materializedSectionsDeleted: number;
 };
 
+export type EpisodeContentResetOptions = {
+  /** Dev / staging only — delete learner progress rows before wiping parts. */
+  confirmDiscardLearnerProgress?: boolean;
+};
+
 export class EpisodeContentResetBlockedError extends Error {
   readonly code = "LEARNER_PROGRESS_EXISTS" as const;
   readonly preview: EpisodeContentResetPreview;
@@ -182,6 +187,16 @@ export function buildLearnerProgressBlockers(
   return blockers;
 }
 
+export function isEpisodeResetAllowed(
+  learnerProgressBlockers: string[],
+  options: EpisodeContentResetOptions = {},
+): boolean {
+  return (
+    learnerProgressBlockers.length === 0 ||
+    options.confirmDiscardLearnerProgress === true
+  );
+}
+
 async function buildCounts(
   episodeId: string,
   db: DbExecutor,
@@ -197,23 +212,30 @@ async function buildCounts(
 export async function previewTestEpisodeContentReset(
   episodeId: string,
   db: DbExecutor = getContentSyncPool(),
+  options: EpisodeContentResetOptions = {},
 ): Promise<EpisodeContentResetPreview> {
   await assertEpisodeExists(episodeId, db);
   const context = await loadEpisodeContext(episodeId, db);
   const counts = await buildCounts(episodeId, db);
   const learnerProgressBlockers = buildLearnerProgressBlockers(counts);
+  const discardProgress = options.confirmDiscardLearnerProgress === true;
 
   return {
     dryRun: true,
     context,
     counts,
     learnerProgressBlockers,
-    allowed: learnerProgressBlockers.length === 0,
+    allowed: isEpisodeResetAllowed(learnerProgressBlockers, options),
     notes: [
       "Episodes/seasons/videos rows are not deleted.",
       "Global dictionary_entries / grammar_concepts are not deleted.",
       "Content-sync plans are not stored in the database.",
       "After reset, run content-import in insert mode for a clean catalog.",
+      ...(discardProgress && learnerProgressBlockers.length > 0
+        ? [
+            "confirmDiscardLearnerProgress: learner progress rows will be deleted with parts.",
+          ]
+        : []),
     ],
   };
 }
@@ -225,8 +247,9 @@ export async function previewTestEpisodeContentReset(
 export async function applyTestEpisodeContentReset(
   episodeId: string,
   db: DbExecutor = getContentSyncPool(),
+  options: EpisodeContentResetOptions = {},
 ): Promise<EpisodeContentResetApplyResult> {
-  const preview = await previewTestEpisodeContentReset(episodeId, db);
+  const preview = await previewTestEpisodeContentReset(episodeId, db, options);
   if (!preview.allowed) {
     throw new EpisodeContentResetBlockedError(preview);
   }

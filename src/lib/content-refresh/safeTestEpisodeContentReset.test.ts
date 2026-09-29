@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildLearnerProgressBlockers } from "./safeTestEpisodeContentReset";
+import {
+  buildLearnerProgressBlockers,
+  isEpisodeResetAllowed,
+} from "./safeTestEpisodeContentReset";
 
 describe("buildLearnerProgressBlockers", () => {
   it("allows reset when all learner tables are empty", () => {
@@ -31,5 +34,23 @@ describe("buildLearnerProgressBlockers", () => {
       willDeleteSavedVocabularyCards: 4,
     });
     assert.equal(blockers.length, 3);
+  });
+});
+
+describe("isEpisodeResetAllowed", () => {
+  it("blocks when blockers exist without discard flag", () => {
+    assert.equal(
+      isEpisodeResetAllowed(["user_part_progress: 1 row(s)"], {}),
+      false,
+    );
+  });
+
+  it("allows when confirmDiscardLearnerProgress is true", () => {
+    assert.equal(
+      isEpisodeResetAllowed(["user_part_progress: 151 row(s)"], {
+        confirmDiscardLearnerProgress: true,
+      }),
+      true,
+    );
   });
 });

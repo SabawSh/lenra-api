@@ -25,12 +25,14 @@ type ResetBody = {
   episodeId?: unknown;
   dryRun?: unknown;
   confirm?: unknown;
+  confirmDiscardLearnerProgress?: unknown;
 };
 
 function parseBody(body: unknown): {
   episodeId: string;
   dryRun: boolean;
   confirm: boolean;
+  confirmDiscardLearnerProgress: boolean;
 } {
   if (body == null || typeof body !== "object" || Array.isArray(body)) {
     throw new Error("Expected JSON object body");
@@ -43,12 +45,15 @@ function parseBody(body: unknown): {
   const dryRun = doc.dryRun !== false;
   const confirm =
     doc.confirm === true || String(doc.confirm ?? "").toLowerCase() === "true";
-  return { episodeId, dryRun, confirm };
+  const confirmDiscardLearnerProgress =
+    doc.confirmDiscardLearnerProgress === true ||
+    String(doc.confirmDiscardLearnerProgress ?? "").toLowerCase() === "true";
+  return { episodeId, dryRun, confirm, confirmDiscardLearnerProgress };
 }
 
 /**
  * POST /api/admin/content-import/episode/reset
- * Body: { episodeId, dryRun?: true, confirm?: true }
+ * Body: { episodeId, dryRun?: true, confirm?: true, confirmDiscardLearnerProgress?: true }
  *
  * dryRun defaults to true. Set dryRun=false and confirm=true to apply.
  */
@@ -64,8 +69,16 @@ export async function POST(req: Request) {
 
     logContentImport("episode-reset", "request", parsed);
 
+    const resetOptions = parsed.confirmDiscardLearnerProgress
+      ? { confirmDiscardLearnerProgress: true as const }
+      : {};
+
     if (parsed.dryRun) {
-      const preview = await previewTestEpisodeContentReset(episodeId);
+      const preview = await previewTestEpisodeContentReset(
+        episodeId,
+        undefined,
+        resetOptions,
+      );
       logContentImport("episode-reset", "dry-run", {
         episodeId,
         allowed: preview.allowed,
@@ -82,7 +95,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await applyTestEpisodeContentReset(episodeId);
+    const result = await applyTestEpisodeContentReset(
+      episodeId,
+      undefined,
+      resetOptions,
+    );
     logContentImport("episode-reset", "applied", {
       episodeId,
       partsDeleted: result.partsDeleted,
