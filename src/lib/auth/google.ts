@@ -23,10 +23,22 @@ export interface GoogleProfile {
   picture?: string;
 }
 
+/** Trim and strip one layer of surrounding quotes (common in Docker/K8s secrets). */
+function normalizeEnvValue(raw: string): string {
+  let v = raw.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set`);
-  return value;
+  if (!value?.trim()) throw new Error(`${name} is not set`);
+  return normalizeEnvValue(value);
 }
 
 const GOOGLE_CALLBACK_PATH = "/api/auth/google/callback";

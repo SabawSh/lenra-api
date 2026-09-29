@@ -15,12 +15,13 @@ import {
 } from "@/lib/auth/linking";
 import {
   PENDING_PHONE_COOKIE,
+  PENDING_PHONE_COOKIE_OPTIONS,
   verifyPendingPhoneToken,
 } from "@/lib/auth/pendingVerification";
+import { parseCookieHeader } from "@/lib/auth/readSessionFromRequest";
 import { postAuthRedirectPath } from "@/lib/auth/postAuthRedirect";
 import { setSessionForUserOnResponse } from "@/lib/auth/setSessionForUser";
 import { revalidateTag } from "next/cache";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -31,12 +32,10 @@ export async function GET(req: Request) {
   const stateParam = url.searchParams.get("state");
   const errorParam = url.searchParams.get("error");
 
-  const cookieStore = await cookies();
+  const cookieJar = parseCookieHeader(req.headers.get("cookie") ?? "");
   const signed = stateParam ? verifySignedOAuthState(stateParam) : null;
-  const requestedNext =
-    signed?.next ?? cookieStore.get(GOOGLE_RETURN_COOKIE)?.value;
-  const intent = (signed?.intent ??
-    cookieStore.get(GOOGLE_INTENT_COOKIE)?.value) as
+  const requestedNext = signed?.next ?? cookieJar[GOOGLE_RETURN_COOKIE];
+  const intent = (signed?.intent ?? cookieJar[GOOGLE_INTENT_COOKIE]) as
     | GoogleOAuthIntent
     | undefined;
 
@@ -67,8 +66,7 @@ export async function GET(req: Request) {
     const now = new Date();
 
     if (intent === "link_phone") {
-      const pendingRaw = cookieStore.get(PENDING_PHONE_COOKIE)?.value;
-      cookieStore.set(PENDING_PHONE_COOKIE, "", { path: "/", maxAge: 0 });
+      const pendingRaw = cookieJar[PENDING_PHONE_COOKIE];
 
       const pending = pendingRaw
         ? await verifyPendingPhoneToken(pendingRaw)
@@ -121,6 +119,10 @@ export async function GET(req: Request) {
       });
       const res = NextResponse.redirect(oauthRedirect(req, destination));
       clearGoogleOAuthCookiesOnResponse(res, req);
+      res.cookies.set(PENDING_PHONE_COOKIE, "", {
+        ...PENDING_PHONE_COOKIE_OPTIONS,
+        maxAge: 0,
+      });
       await setSessionForUserOnResponse(res, user);
       return res;
     }
