@@ -60,6 +60,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, overview });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error("[content-import/episode]", view, episodeId, message);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

@@ -9,6 +9,7 @@ import {
   buildContentRefreshValidation,
   runContentRefresh,
 } from "@/lib/content-refresh";
+import { columnExists } from "@/lib/content-refresh/validateRefresh";
 import type {
   ContentRefreshArtifactBundle,
   ContentRefreshResult,
@@ -91,38 +92,22 @@ export async function getEpisodeContentOverview(
   episodeId: string,
 ): Promise<EpisodeContentOverview> {
   const validation = await buildContentRefreshValidation(episodeId, []);
-  const pool = getContentSyncPool();
-
-  const [vocabParts] = await pool.execute<RowDataPacket[]>(
-    `
-    SELECT COUNT(DISTINCT pvo.part_id) AS c
-    FROM part_vocabulary_occurrences pvo
-    INNER JOIN parts p ON p.id = pvo.part_id
-    WHERE p.episode_id = ?
-    `,
-    [episodeId],
-  );
-  const [grammarParts] = await pool.execute<RowDataPacket[]>(
-    `
-    SELECT COUNT(DISTINCT pgo.part_id) AS c
-    FROM part_grammar_occurrences pgo
-    INNER JOIN parts p ON p.id = pgo.part_id
-    WHERE p.episode_id = ?
-    `,
-    [episodeId],
-  );
+  const partCount = validation.databasePartCount;
 
   return {
     episodeId,
-    partCount: validation.databasePartCount,
+    partCount,
     uniqueCanonicalKeys: validation.uniqueCanonicalKeys,
     duplicateCanonicalKeyGroups: validation.duplicateCanonicalKeyGroups,
     translationCount: validation.translationCount,
     partsMissingTranslation: validation.partsMissingTranslation,
     vocabularyOccurrences: validation.vocabularyOccurrencesInDb,
-    partsWithVocabulary: Number(vocabParts[0]?.c ?? 0),
+    partsWithVocabulary: Math.max(
+      0,
+      partCount - validation.partsMissingVocabulary,
+    ),
     grammarOccurrences: validation.grammarOccurrencesInDb,
-    partsWithGrammar: Number(grammarParts[0]?.c ?? 0),
+    partsWithGrammar: Math.max(0, partCount - validation.partsMissingGrammar),
     partsMissingMedia: validation.partsMissingMedia,
   };
 }
@@ -133,12 +118,13 @@ export async function listEpisodePartSummaries(
   offset = 0,
 ): Promise<EpisodePartSummary[]> {
   const pool = getContentSyncPool();
+  const hasCanonicalKey = await columnExists("parts", "canonical_key");
   const [rows] = await pool.execute<RowDataPacket[]>(
     `
     SELECT
       CAST(p.id AS CHAR) AS id,
       p.\`order\` AS partOrder,
-      p.canonical_key AS canonicalKey,
+      ${hasCanonicalKey ? "p.canonical_key" : "NULL"} AS canonicalKey,
       p.text AS text,
       p.difficulty AS difficulty,
       (ct.id IS NOT NULL) AS hasTranslation,
@@ -178,12 +164,13 @@ export async function getPartLearningDetail(
   partId: string,
 ): Promise<PartLearningDetail | null> {
   const pool = getContentSyncPool();
+  const hasCanonicalKey = await columnExists("parts", "canonical_key");
   const [parts] = await pool.execute<RowDataPacket[]>(
     `
     SELECT
       CAST(p.id AS CHAR) AS id,
       p.\`order\` AS partOrder,
-      p.canonical_key AS canonicalKey,
+      ${hasCanonicalKey ? "p.canonical_key" : "NULL"} AS canonicalKey,
       p.text AS text
     FROM parts p
     WHERE p.id = ?

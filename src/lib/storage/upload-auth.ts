@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
+import { getApiRequest } from "@/lib/auth/apiRequestContext";
+import {
+  getCurrentUser,
+  getCurrentUserUncached,
+} from "@/lib/auth/getCurrentUser";
 import { isSiteMediaAdmin } from "@/lib/auth/siteAdmin";
 
 /**
@@ -18,7 +22,9 @@ export async function assertMediaUploadAllowed(
     return null;
   }
 
-  const user = await getCurrentUser();
+  const user = getApiRequest()
+    ? await getCurrentUserUncached()
+    : await getCurrentUser();
   if (!user || !isSiteMediaAdmin(user)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

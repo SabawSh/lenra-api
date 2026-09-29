@@ -17,17 +17,44 @@ async function tableExists(table: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+export async function columnExists(table: string, column: string): Promise<boolean> {
+  const pool = getContentSyncPool();
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `
+    SELECT 1 AS ok
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+      AND COLUMN_NAME = ?
+    LIMIT 1
+    `,
+    [table, column],
+  );
+  return rows.length > 0;
+}
+
 export async function buildContentRefreshValidation(
   episodeId: string,
   notes: string[] = [],
 ): Promise<ContentRefreshValidation> {
   const pool = getContentSyncPool();
 
+  const hasCanonicalKey = await columnExists("parts", "canonical_key");
   const [partRows] = await pool.execute<RowDataPacket[]>(
-    `
+    hasCanonicalKey
+      ? `
     SELECT
       CAST(id AS CHAR) AS id,
       canonical_key AS canonicalKey,
+      video_url AS videoUrl,
+      hls_manifest_url AS hlsManifestUrl
+    FROM parts
+    WHERE episode_id = ?
+    `
+      : `
+    SELECT
+      CAST(id AS CHAR) AS id,
+      NULL AS canonicalKey,
       video_url AS videoUrl,
       hls_manifest_url AS hlsManifestUrl
     FROM parts
@@ -38,10 +65,12 @@ export async function buildContentRefreshValidation(
 
   const partIds = partRows.map((r) => String(r.id));
   const keyCounts = new Map<string, number>();
-  for (const row of partRows) {
-    const key = row.canonicalKey ? String(row.canonicalKey) : "";
-    if (!key) continue;
-    keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+  if (hasCanonicalKey) {
+    for (const row of partRows) {
+      const key = row.canonicalKey ? String(row.canonicalKey) : "";
+      if (!key) continue;
+      keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+    }
   }
   const uniqueCanonicalKeys = keyCounts.size;
   const duplicateCanonicalKeyGroups = [...keyCounts.values()].filter(
@@ -54,11 +83,12 @@ export async function buildContentRefreshValidation(
     const [trRows] = await pool.execute<RowDataPacket[]>(
       `
       SELECT COUNT(*) AS c
-      FROM caption_translations
-      WHERE language = 'fa'
-        AND part_id IN (${partIds.map(() => "?").join(",")})
+      FROM caption_translations ct
+      INNER JOIN parts p ON p.id = ct.part_id
+      WHERE ct.language = 'fa'
+        AND p.episode_id = ?
       `,
-      partIds,
+      [episodeId],
     );
     translationCount = Number(trRows[0]?.c ?? 0);
 
@@ -89,10 +119,11 @@ export async function buildContentRefreshValidation(
     const [occRows] = await pool.execute<RowDataPacket[]>(
       `
       SELECT COUNT(*) AS c
-      FROM part_vocabulary_occurrences
-      WHERE part_id IN (${partIds.map(() => "?").join(",")})
+      FROM part_vocabulary_occurrences pvo
+      INNER JOIN parts p ON p.id = pvo.part_id
+      WHERE p.episode_id = ?
       `,
-      partIds,
+      [episodeId],
     );
     vocabularyOccurrencesInDb = Number(occRows[0]?.c ?? 0);
 
@@ -122,10 +153,11 @@ export async function buildContentRefreshValidation(
     const [goRows] = await pool.execute<RowDataPacket[]>(
       `
       SELECT COUNT(*) AS c
-      FROM part_grammar_occurrences
-      WHERE part_id IN (${partIds.map(() => "?").join(",")})
+      FROM part_grammar_occurrences pgo
+      INNER JOIN parts p ON p.id = pgo.part_id
+      WHERE p.episode_id = ?
       `,
-      partIds,
+      [episodeId],
     );
     grammarOccurrencesInDb = Number(goRows[0]?.c ?? 0);
 
