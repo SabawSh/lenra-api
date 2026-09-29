@@ -5,9 +5,14 @@ on:
     branches:
       - main
 
+# Push image to GHCR; server pulls by tag (no scp tarballs / docker load).
+permissions:
+  contents: read
+  packages: write
+
 env:
-  IMAGE_NAME: lenra-api
-  DEPLOY_STAGING_DIR: /home/ubuntu/deploy-staging
+  CONTAINER_NAME: lenra-api
+  REGISTRY: ghcr.io
 
 jobs:
   deploy:
@@ -18,13 +23,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t ${IMAGE_NAME}:${{ github.sha }} .
-
-      - name: Save Docker image
+      - name: Resolve GHCR image name
+        id: image
         run: |
-          docker save ${IMAGE_NAME}:${{ github.sha }} | gzip -1 > ${IMAGE_NAME}.tar.gz
-          ls -lh ${IMAGE_NAME}.tar.gz
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REGISTRY}/${owner}/${CONTAINER_NAME}" >> "$GITHUB_ENV"
+          echo "GHCR image: ${REGISTRY}/${owner}/${CONTAINER_NAME}:${{ github.sha }}"
+
+      - name: Log in to GHCR (push)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        run: |
+          docker build -t "${IMAGE_REF}:${{ github.sha }}" .
+          docker push "${IMAGE_REF}:${{ github.sha }}"
+          docker tag "${IMAGE_REF}:${{ github.sha }}" "${IMAGE_REF}:latest"
+          docker push "${IMAGE_REF}:latest"
 
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
@@ -38,42 +57,35 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Prepare staging directory
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-        run: |
-          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p ${DEPLOY_STAGING_DIR} && df -h ${DEPLOY_STAGING_DIR}"
-
-      - name: Free disk on deploy host (before upload)
+      - name: Free disk on deploy host
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
           set -euo pipefail
-          IMAGE_NAME="${IMAGE_NAME}"
-          STAGING="${DEPLOY_STAGING_DIR}"
+          CONTAINER="${CONTAINER_NAME}"
+          IMAGE_REF="${IMAGE_REF}"
 
           echo "=== Disk before cleanup ==="
           df -h /
           docker system df || true
 
-          # Deploy tarballs are often 0.5–1.5GB; remove before uploading another.
-          rm -f "\${STAGING}/\${IMAGE_NAME}.tar.gz" 2>/dev/null || true
-          find "\${STAGING}" -maxdepth 1 -name "\${IMAGE_NAME}*.tar.gz" -delete 2>/dev/null || true
+          # Legacy scp deploy artifacts
+          rm -f /home/ubuntu/deploy-staging/\${CONTAINER}.tar.gz 2>/dev/null || true
+          rm -f /home/ubuntu/deploy-staging/\${CONTAINER}*.tar.gz 2>/dev/null || true
 
-          docker stop "\${IMAGE_NAME}-old" 2>/dev/null || true
-          docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
+          docker stop "\${CONTAINER}-old" 2>/dev/null || true
+          docker rm -f "\${CONTAINER}-old" 2>/dev/null || true
 
-          if docker inspect "\${IMAGE_NAME}" >/dev/null 2>&1; then
-            KEEP=\$(docker inspect -f '{{.Image}}' "\${IMAGE_NAME}")
-            docker images "\${IMAGE_NAME}" --no-trunc --format '{{.ID}}' | sort -u | while read -r id; do
-              if [ "\$id" != "\$KEEP" ]; then
-                echo "Removing unused \${IMAGE_NAME} image \$id"
-                docker rmi -f "\$id" 2>/dev/null || true
-              fi
+          if docker inspect "\${CONTAINER}" >/dev/null 2>&1; then
+            KEEP=\$(docker inspect -f '{{.Image}}' "\${CONTAINER}")
+            for repo in "\${IMAGE_REF}" "\${CONTAINER}"; do
+              docker images "\${repo}" --no-trunc --format '{{.ID}}' 2>/dev/null | sort -u | while read -r id; do
+                if [ "\$id" != "\$KEEP" ]; then
+                  docker rmi -f "\$id" 2>/dev/null || true
+                fi
+              done
             done
           fi
 
@@ -86,67 +98,59 @@ jobs:
           docker system df || true
           EOF
 
-      - name: Upload image
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-        run: |
-          scp -o ServerAliveInterval=15 -o ServerAliveCountMax=120 \
-            "${IMAGE_NAME}.tar.gz" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_STAGING_DIR}/${IMAGE_NAME}.tar.gz"
-
-      - name: Deploy on server
+      - name: Deploy on server (docker pull)
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           IMAGE_TAG: ${{ github.sha }}
+          GHCR_DEPLOY_TOKEN: ${{ secrets.GHCR_DEPLOY_TOKEN }}
+          GHCR_USER: ${{ steps.image.outputs.owner }}
         run: |
-          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
-          set -euo pipefail
-          ARCHIVE="${DEPLOY_STAGING_DIR}/${IMAGE_NAME}.tar.gz"
-          IMAGE_TAG="${IMAGE_TAG}"
-          IMAGE_NAME="${IMAGE_NAME}"
-          MIN_FREE_MB=1800
-
-          echo "=== Disk before deploy ==="
-          df -h / /var/lib/docker "${DEPLOY_STAGING_DIR}" 2>/dev/null || df -h
-          docker system df || true
-
-          # Failed deploys often leave large tarballs and duplicate images on disk.
-          find "${DEPLOY_STAGING_DIR}" -maxdepth 1 -name "\${IMAGE_NAME}*.tar.gz" ! -path "\$ARCHIVE" -delete 2>/dev/null || true
-
-          docker stop "\${IMAGE_NAME}-old" 2>/dev/null || true
-          docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
-          docker image prune -af || true
-
-          avail=\$(df -m / | awk 'NR==2 {print \$4}')
-          echo "Docker/root free space: \${avail}MB (need >= \${MIN_FREE_MB}MB before docker load)"
-          if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
-            echo "ERROR: not enough disk space to docker load — free space on the server and re-run deploy."
-            df -h
-            docker system df
+          if [ -z "${GHCR_DEPLOY_TOKEN}" ]; then
+            echo "ERROR: Add repo secret GHCR_DEPLOY_TOKEN (classic PAT with read:packages) so the server can pull from GHCR."
             exit 1
           fi
 
-          gunzip -c "\$ARCHIVE" | docker load
+          echo "${GHCR_DEPLOY_TOKEN}" | ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "docker login ghcr.io -u ${GHCR_USER} --password-stdin"
 
-          docker stop "\$IMAGE_NAME" 2>/dev/null || true
-          docker rename "\$IMAGE_NAME" "\${IMAGE_NAME}-old" 2>/dev/null || true
+          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+          set -euo pipefail
+          CONTAINER="${CONTAINER_NAME}"
+          IMAGE_REF="${IMAGE_REF}"
+          IMAGE_TAG="${IMAGE_TAG}"
+          MIN_FREE_MB=800
+
+          echo "=== Disk before pull ==="
+          df -h /
+          docker system df || true
+
+          avail=\$(df -m / | awk 'NR==2 {print \$4}')
+          echo "Free space: \${avail}MB (need >= \${MIN_FREE_MB}MB before docker pull)"
+          if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
+            echo "ERROR: not enough disk space — free space on the server and re-run deploy."
+            exit 1
+          fi
+
+          docker pull "\${IMAGE_REF}:\${IMAGE_TAG}"
+
+          docker stop "\${CONTAINER}" 2>/dev/null || true
+          docker rename "\${CONTAINER}" "\${CONTAINER}-old" 2>/dev/null || true
 
           docker run -d \\
-            --name "\$IMAGE_NAME" \\
+            --name "\${CONTAINER}" \\
             --restart unless-stopped \\
             --network mysql-network \\
             --env-file /home/ubuntu/projects/lenra-api/.env \\
             -p 127.0.0.1:4000:4000 \\
-            "\${IMAGE_NAME}:\${IMAGE_TAG}"
+            "\${IMAGE_REF}:\${IMAGE_TAG}"
 
           sleep 5
           curl --fail "http://127.0.0.1:4000/health"
 
-          docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
-          rm -f "\$ARCHIVE"
+          docker rm -f "\${CONTAINER}-old" 2>/dev/null || true
           docker image prune -af || true
           echo "=== Disk after deploy ==="
-          df -h / /var/lib/docker 2>/dev/null || df -h
+          df -h /
+          docker system df || true
           EOF
