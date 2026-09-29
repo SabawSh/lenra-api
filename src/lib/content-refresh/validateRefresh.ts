@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { getContentSyncPool } from "../content-sync/syncDb";
 import type { ContentRefreshValidation } from "./types";
 
-async function tableExists(table: string): Promise<boolean> {
+export async function tableExists(table: string): Promise<boolean> {
   const pool = getContentSyncPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `
@@ -40,23 +40,23 @@ export async function buildContentRefreshValidation(
   const pool = getContentSyncPool();
 
   const hasCanonicalKey = await columnExists("parts", "canonical_key");
+  const hasVideoUrl = await columnExists("parts", "video_url");
+  const hasHlsManifest = await columnExists("parts", "hls_manifest_url");
+  const videoUrlSelect = hasVideoUrl ? "video_url AS videoUrl" : "NULL AS videoUrl";
+  const hlsSelect = hasHlsManifest
+    ? "hls_manifest_url AS hlsManifestUrl"
+    : "NULL AS hlsManifestUrl";
+  const canonicalSelect = hasCanonicalKey
+    ? "canonical_key AS canonicalKey"
+    : "NULL AS canonicalKey";
+
   const [partRows] = await pool.execute<RowDataPacket[]>(
-    hasCanonicalKey
-      ? `
-    SELECT
-      CAST(id AS CHAR) AS id,
-      canonical_key AS canonicalKey,
-      video_url AS videoUrl,
-      hls_manifest_url AS hlsManifestUrl
-    FROM parts
-    WHERE episode_id = ?
     `
-      : `
     SELECT
       CAST(id AS CHAR) AS id,
-      NULL AS canonicalKey,
-      video_url AS videoUrl,
-      hls_manifest_url AS hlsManifestUrl
+      ${canonicalSelect},
+      ${videoUrlSelect},
+      ${hlsSelect}
     FROM parts
     WHERE episode_id = ?
     `,
@@ -79,7 +79,7 @@ export async function buildContentRefreshValidation(
 
   let translationCount = 0;
   let partsMissingTranslation = partIds.length;
-  if (partIds.length > 0) {
+  if (partIds.length > 0 && (await tableExists("caption_translations"))) {
     const [trRows] = await pool.execute<RowDataPacket[]>(
       `
       SELECT COUNT(*) AS c

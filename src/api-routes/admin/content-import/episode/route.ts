@@ -13,15 +13,14 @@ export const runtime = "nodejs";
  * GET /api/admin/content-import/episode?episodeId=&view=overview|parts|part&partId=&limit=&offset=
  */
 export async function GET(req: Request) {
-  const denied = await assertMediaUploadAllowed(req);
-  if (denied) return denied;
-
   const url = new URL(req.url);
   const episodeId = url.searchParams.get("episodeId")?.trim() ?? "";
   const view = url.searchParams.get("view")?.trim() ?? "overview";
   const partId = url.searchParams.get("partId")?.trim() ?? "";
 
   try {
+    const denied = await assertMediaUploadAllowed(req);
+    if (denied) return denied;
     if (view === "part") {
       if (!partId) {
         return NextResponse.json(

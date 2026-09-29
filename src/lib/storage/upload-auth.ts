@@ -22,11 +22,20 @@ export async function assertMediaUploadAllowed(
     return null;
   }
 
-  const user = getApiRequest()
-    ? await getCurrentUserUncached()
-    : await getCurrentUser();
-  if (!user || !isSiteMediaAdmin(user)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const user = getApiRequest()
+      ? await getCurrentUserUncached()
+      : await getCurrentUser();
+    if (!user || !isSiteMediaAdmin(user)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[upload-auth]", message);
+    return NextResponse.json(
+      { error: "Auth check failed", detail: message },
+      { status: 503 },
+    );
   }
-  return null;
 }
