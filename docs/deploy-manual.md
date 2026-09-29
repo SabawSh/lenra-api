@@ -24,7 +24,7 @@ Priorities: **SAFE → SIMPLE → FAST**
 
    ```bash
    cd /home/ubuntu/projects/lenra-api
-   chmod +x scripts/deploy-production.sh scripts/docker-cleanup.sh
+   chmod +x scripts/deploy.sh scripts/deploy-production.sh scripts/docker-cleanup.sh
    ```
 
 4. Confirm Docker and the MySQL network:
@@ -38,7 +38,31 @@ Priorities: **SAFE → SIMPLE → FAST**
 
 ---
 
-## Deploy a release
+## Daily deployment
+
+On the VPS (from the repo root):
+
+```bash
+./scripts/deploy.sh
+```
+
+Deploys the latest `origin/main` commit inside tmux session `deploy` (fetch, clean worktree check, checkout, then `deploy-production.sh`).
+
+Specific commit:
+
+```bash
+./scripts/deploy.sh <git-sha>
+```
+
+Attach to watch progress:
+
+```bash
+tmux attach -t deploy
+```
+
+---
+
+## Deploy a release (manual steps)
 
 From your laptop:
 
