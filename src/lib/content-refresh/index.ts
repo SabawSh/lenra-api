@@ -14,6 +14,16 @@ export type {
   ContentRefreshArtifactBundle,
 } from "./types";
 export type { EpisodeResetImpact } from "./resetEpisodeParts";
+export {
+  applyTestEpisodeContentReset,
+  previewTestEpisodeContentReset,
+  EpisodeContentResetBlockedError,
+  buildLearnerProgressBlockers,
+} from "./safeTestEpisodeContentReset";
+export type {
+  EpisodeContentResetApplyResult,
+  EpisodeContentResetPreview,
+} from "./safeTestEpisodeContentReset";
 export type {
   SafeReplacePreview,
   TableReplaceClass,

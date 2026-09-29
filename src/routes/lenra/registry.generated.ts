@@ -25,6 +25,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/admin/content-import/episode/route.js"),
   },
   {
+    urlPattern: "/api/admin/content-import/episode/reset",
+    paramNames: [],
+    load: () => import("../../api-routes/admin/content-import/episode/reset/route.js"),
+  },
+  {
     urlPattern: "/api/admin/content-import/json",
     paramNames: [],
     load: () => import("../../api-routes/admin/content-import/json/route.js"),
