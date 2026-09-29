@@ -46,6 +46,46 @@ jobs:
           ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "mkdir -p ${DEPLOY_STAGING_DIR} && df -h ${DEPLOY_STAGING_DIR}"
 
+      - name: Free disk on deploy host (before upload)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+          set -euo pipefail
+          IMAGE_NAME="${IMAGE_NAME}"
+          STAGING="${DEPLOY_STAGING_DIR}"
+
+          echo "=== Disk before cleanup ==="
+          df -h /
+          docker system df || true
+
+          # Deploy tarballs are often 0.5–1.5GB; remove before uploading another.
+          rm -f "\${STAGING}/\${IMAGE_NAME}.tar.gz" 2>/dev/null || true
+          find "\${STAGING}" -maxdepth 1 -name "\${IMAGE_NAME}*.tar.gz" -delete 2>/dev/null || true
+
+          docker stop "\${IMAGE_NAME}-old" 2>/dev/null || true
+          docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
+
+          if docker inspect "\${IMAGE_NAME}" >/dev/null 2>&1; then
+            KEEP=\$(docker inspect -f '{{.Image}}' "\${IMAGE_NAME}")
+            docker images "\${IMAGE_NAME}" --no-trunc --format '{{.ID}}' | sort -u | while read -r id; do
+              if [ "\$id" != "\$KEEP" ]; then
+                echo "Removing unused \${IMAGE_NAME} image \$id"
+                docker rmi -f "\$id" 2>/dev/null || true
+              fi
+            done
+          fi
+
+          docker container prune -f || true
+          docker image prune -af || true
+          docker builder prune -af 2>/dev/null || true
+
+          echo "=== Disk after cleanup ==="
+          df -h /
+          docker system df || true
+          EOF
+
       - name: Upload image
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -77,10 +117,9 @@ jobs:
 
           docker stop "\${IMAGE_NAME}-old" 2>/dev/null || true
           docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
-          docker image prune -af --filter "until=72h" || true
-          docker builder prune -af 2>/dev/null || true
+          docker image prune -af || true
 
-          avail=\$(df -m /var/lib/docker 2>/dev/null | awk 'NR==2 {print \$4}' || df -m / | awk 'NR==2 {print \$4}')
+          avail=\$(df -m / | awk 'NR==2 {print \$4}')
           echo "Docker/root free space: \${avail}MB (need >= \${MIN_FREE_MB}MB before docker load)"
           if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
             echo "ERROR: not enough disk space to docker load — free space on the server and re-run deploy."
@@ -107,7 +146,7 @@ jobs:
 
           docker rm -f "\${IMAGE_NAME}-old" 2>/dev/null || true
           rm -f "\$ARCHIVE"
-          docker image prune -af --filter "until=168h"
+          docker image prune -af || true
           echo "=== Disk after deploy ==="
           df -h / /var/lib/docker 2>/dev/null || df -h
           EOF
