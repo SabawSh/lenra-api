@@ -28,7 +28,7 @@ jobs:
         run: |
           owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           echo "owner=${owner}" >> "$GITHUB_OUTPUT"
-          echo "ref=${REGISTRY}/${owner}/${CONTAINER_NAME}" >> "$GITHUB_ENV"
+          echo "IMAGE_REF=${REGISTRY}/${owner}/${CONTAINER_NAME}" >> "$GITHUB_ENV"
           echo "GHCR image: ${REGISTRY}/${owner}/${CONTAINER_NAME}:${{ github.sha }}"
 
       - name: Log in to GHCR (push)
@@ -40,6 +40,10 @@ jobs:
 
       - name: Build and push image
         run: |
+          if [ -z "${IMAGE_REF}" ]; then
+            echo "ERROR: IMAGE_REF is empty (Resolve GHCR image name step failed)."
+            exit 1
+          fi
           docker build -t "${IMAGE_REF}:${{ github.sha }}" .
           docker push "${IMAGE_REF}:${{ github.sha }}"
           docker tag "${IMAGE_REF}:${{ github.sha }}" "${IMAGE_REF}:latest"
