@@ -212,17 +212,35 @@ export async function applyContentSyncPlanOnConnection(
     );
   }
 
-  // Bump every part order by a large delta so final orders 1..n cannot collide
-  // with rows not yet updated. Sequential temp ids (10_000_000, 10_000_001, …)
-  // fail when a prior failed import left parts already in that range.
-  await conn.execute<ResultSetHeader>(
+  // Move every part to a unique temporary order before applying final 1..n.
+  // A uniform `order + BASE` bump collides when active + retired rows share the
+  // same order, or when a prior run left rows in the temp range (e.g. 10000008).
+  const [maxRows] = await conn.query<RowDataPacket[]>(
     `
-    UPDATE parts
-    SET \`order\` = \`order\` + ?
+    SELECT COALESCE(MAX(\`order\`), 0) AS maxOrder
+    FROM parts
     WHERE episode_id = ?
     `,
-    [CONTENT_SYNC_TEMP_ORDER_BASE, plan.episodeId],
+    [plan.episodeId],
   );
+  const maxOrder = Number(maxRows[0]?.maxOrder ?? 0);
+  const tempStart = Math.max(CONTENT_SYNC_TEMP_ORDER_BASE, maxOrder + 1);
+
+  const [allRows] = await conn.query<RowDataPacket[]>(
+    `
+    SELECT id FROM parts
+    WHERE episode_id = ?
+    ORDER BY \`order\` ASC, id ASC
+    `,
+    [plan.episodeId],
+  );
+  let tempOrder = tempStart;
+  for (const row of allRows) {
+    await conn.execute<ResultSetHeader>(
+      `UPDATE parts SET \`order\` = ? WHERE id = ?`,
+      [tempOrder++, String(row.id)],
+    );
+  }
 
   for (const match of plan.matches) {
     const clip = clipsByOrder.get(match.pipelineOrder);
