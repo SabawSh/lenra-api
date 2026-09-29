@@ -757,6 +757,97 @@ export const paths: Paths = {
       },
     },
   },
+  "/api/admin/content-import": {
+    post: {
+      tags: ["Admin"],
+      summary: "Import pipeline artifacts (multipart upload)",
+      description:
+        "Upload clips and optional JSON artifacts as multipart/form-data. Use ?dryRun=1 for preview.",
+      security: mediaSecurity,
+      parameters: [
+        {
+          name: "dryRun",
+          in: "query",
+          schema: { type: "string", enum: ["1"] },
+        },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          "multipart/form-data": {
+            schema: {
+              type: "object",
+              required: ["episodeId", "clips"],
+              properties: {
+                episodeId: { type: "string" },
+                mode: { type: "string", enum: ["insert", "replace"] },
+                confirmReplace: { type: "string" },
+                clips: { type: "string", format: "binary" },
+                learningAnalysis: { type: "string", format: "binary" },
+                translations: { type: "string", format: "binary" },
+                vocabularySenses: { type: "string", format: "binary" },
+                vocabularyOccurrences: { type: "string", format: "binary" },
+                grammarOccurrences: { type: "string", format: "binary" },
+                grammarCatalog: { type: "string", format: "binary" },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        "200": {
+          description: "Preview or import result",
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ContentImportResponse" },
+            },
+          },
+        },
+        "400": { description: "Validation error" },
+        "401": unauthorized["401"],
+        "409": { description: "Duplicate DB row (e.g. part order)" },
+        "413": { description: "Payload too large" },
+      },
+    },
+  },
+  "/api/admin/content-import/json": {
+    post: {
+      tags: ["Admin"],
+      summary: "Import pipeline artifacts (JSON body)",
+      description:
+        "Same import engine as multipart content-import. Intended for lenra-content-pipeline publish. ?dryRun=1 for preview.",
+      security: mediaSecurity,
+      parameters: [
+        {
+          name: "dryRun",
+          in: "query",
+          schema: { type: "string", enum: ["1"] },
+        },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/ContentImportJsonRequest" },
+          },
+        },
+      },
+      responses: {
+        "200": {
+          description: "Preview or import result",
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ContentImportResponse" },
+            },
+          },
+        },
+        "400": { description: "Validation error" },
+        "401": unauthorized["401"],
+        "409": { description: "Duplicate DB row" },
+        "413": { description: "Payload too large" },
+      },
+    },
+  },
   "/api/admin/seed-catalog": {
     post: {
       tags: ["Admin"],

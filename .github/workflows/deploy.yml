@@ -13,6 +13,13 @@ permissions:
 env:
   CONTAINER_NAME: lenra-api
   REGISTRY: ghcr.io
+  # Keep long docker pull sessions alive through NAT/firewalls (avoid Broken pipe).
+  SSH_COMMON_OPTS: >-
+    -o BatchMode=yes
+    -o ServerAliveInterval=15
+    -o ServerAliveCountMax=120
+    -o TCPKeepAlive=yes
+    -o ConnectTimeout=30
 
 jobs:
   deploy:
@@ -66,7 +73,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
           set -euo pipefail
           CONTAINER="${CONTAINER_NAME}"
           IMAGE_REF="${IMAGE_REF}"
@@ -75,7 +82,6 @@ jobs:
           df -h /
           docker system df || true
 
-          # Legacy scp deploy artifacts
           rm -f /home/ubuntu/deploy-staging/\${CONTAINER}.tar.gz 2>/dev/null || true
           rm -f /home/ubuntu/deploy-staging/\${CONTAINER}*.tar.gz 2>/dev/null || true
 
@@ -102,12 +108,10 @@ jobs:
           docker system df || true
           EOF
 
-      - name: Deploy on server (docker pull)
+      - name: GHCR login on deploy host
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          IMAGE_TAG: ${{ github.sha }}
-          # Optional long-lived PAT for manual pulls on the server; else job GITHUB_TOKEN.
           GHCR_PAT: ${{ secrets.GHCR_DEPLOY_TOKEN || secrets.GITHUB_TOKEN }}
           GHCR_LOGIN_USER: ${{ github.actor }}
         run: |
@@ -115,29 +119,74 @@ jobs:
             echo "ERROR: No GHCR credentials (GITHUB_TOKEN missing — check workflow packages permission)."
             exit 1
           fi
-
-          echo "${GHCR_PAT}" | ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
+          echo "${GHCR_PAT}" | ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "docker login ghcr.io -u ${GHCR_LOGIN_USER} --password-stdin"
 
-          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+      - name: Pull image on deploy host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
           set -euo pipefail
-          CONTAINER="${CONTAINER_NAME}"
-          IMAGE_REF="${IMAGE_REF}"
-          IMAGE_TAG="${IMAGE_TAG}"
+          IMAGE="${IMAGE_REF}:${IMAGE_TAG}"
           MIN_FREE_MB=800
 
-          echo "=== Disk before pull ==="
-          df -h /
-          docker system df || true
+          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "df -h /; avail=\$(df -m / | awk 'NR==2 {print \$4}'); test \${avail} -ge ${MIN_FREE_MB}"
 
-          avail=\$(df -m / | awk 'NR==2 {print \$4}')
-          echo "Free space: \${avail}MB (need >= \${MIN_FREE_MB}MB before docker pull)"
-          if [ "\${avail}" -lt "\${MIN_FREE_MB}" ]; then
-            echo "ERROR: not enough disk space — free space on the server and re-run deploy."
-            exit 1
+          # Pull in background so a dropped SSH session does not abort docker pull mid-layer.
+          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+          set -euo pipefail
+          IMAGE="${IMAGE}"
+          LOG=/tmp/lenra-api-docker-pull.log
+          PIDFILE=/tmp/lenra-api-docker-pull.pid
+
+          if docker image inspect "\${IMAGE}" >/dev/null 2>&1; then
+            echo "Image already present: \${IMAGE}"
+            exit 0
           fi
 
-          docker pull "\${IMAGE_REF}:\${IMAGE_TAG}"
+          rm -f "\${LOG}" "\${PIDFILE}"
+          nohup docker pull "\${IMAGE}" > "\${LOG}" 2>&1 &
+          echo \$! > "\${PIDFILE}"
+          echo "Started docker pull pid=\$(cat "\${PIDFILE}")"
+          EOF
+
+          echo "Waiting for docker pull (short SSH polls, up to ~15 min)..."
+          for i in $(seq 1 60); do
+            if ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "docker image inspect '${IMAGE}' >/dev/null 2>&1"; then
+              echo "Pull complete after ${i} poll(s)."
+              ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                "tail -n 20 /tmp/lenra-api-docker-pull.log 2>/dev/null || true"
+              exit 0
+            fi
+            if ! ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "test -f /tmp/lenra-api-docker-pull.pid && kill -0 \$(cat /tmp/lenra-api-docker-pull.pid) 2>/dev/null"; then
+              echo "ERROR: docker pull process stopped before image was ready."
+              ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                "tail -n 40 /tmp/lenra-api-docker-pull.log 2>/dev/null || true"
+              exit 1
+            fi
+            sleep 15
+          done
+
+          echo "ERROR: docker pull timed out after 15 minutes."
+          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "tail -n 40 /tmp/lenra-api-docker-pull.log 2>/dev/null || true"
+          exit 1
+
+      - name: Rollout container on deploy host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ssh ${SSH_COMMON_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
+          set -euo pipefail
+          CONTAINER="${CONTAINER_NAME}"
+          IMAGE="${IMAGE_REF}:${IMAGE_TAG}"
 
           docker stop "\${CONTAINER}" 2>/dev/null || true
           docker rename "\${CONTAINER}" "\${CONTAINER}-old" 2>/dev/null || true
@@ -148,7 +197,7 @@ jobs:
             --network mysql-network \\
             --env-file /home/ubuntu/projects/lenra-api/.env \\
             -p 127.0.0.1:4000:4000 \\
-            "\${IMAGE_REF}:\${IMAGE_TAG}"
+            "\${IMAGE}"
 
           sleep 5
           curl --fail "http://127.0.0.1:4000/health"

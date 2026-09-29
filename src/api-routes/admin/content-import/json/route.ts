@@ -4,7 +4,7 @@ import { ContentImportRunTimer, logContentImport } from "@/lib/admin/contentImpo
 import {
   contentImportErrorResponse,
   isContentImportDryRun,
-  parseMultipartContentImport,
+  parseJsonContentImportBody,
   runContentImportFromParsed,
 } from "@/lib/admin/contentImportRequest";
 import { assertMediaUploadAllowed } from "@/lib/storage/upload-auth";
@@ -14,8 +14,8 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /**
- * POST /api/admin/content-import
- * multipart: episodeId, mode, confirmReplace?, clips (+ optional artifact files)
+ * POST /api/admin/content-import/json
+ * application/json body with episodeId, mode, confirmReplace?, artifacts{...}
  * query: ?dryRun=1 for preview only
  */
 export async function POST(req: Request) {
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
   const contentLength = req.headers.get("content-length");
   const requestTimer = new ContentImportRunTimer("pending", dryRun);
-  logContentImport("import", "request", {
+  logContentImport("json", "request", {
     dryRun,
     contentLength,
     contentType: req.headers.get("content-type")?.split(";")[0],
@@ -35,42 +35,37 @@ export async function POST(req: Request) {
     if (denied) return denied;
 
     const contentType = req.headers.get("content-type") ?? "";
-    if (!contentType.includes("multipart/form-data")) {
+    if (!contentType.includes("application/json")) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Expected multipart/form-data with artifact files",
+          error: "Expected application/json body",
           stage: dryRun ? "validation" : "import",
         },
         { status: 400 },
       );
     }
 
-    let form: FormData;
+    let body: unknown;
     try {
-      form = await req.formData();
+      body = await req.json();
     } catch (parseErr) {
       const message =
         parseErr instanceof Error ? parseErr.message : String(parseErr);
-      logContentImport("import", "formData parse failed", {
-        message,
-        contentLength,
-      });
+      logContentImport("json", "json parse failed", { message, contentLength });
       return NextResponse.json(
         {
           ok: false,
-          error:
-            "Could not read multipart body (often payload too large for Next.js/CDN proxy). " +
-            "Ensure proxyClientMaxBodySize and CDN upload limits allow ~160MB for admin import.",
+          error: "Invalid JSON body",
           detail: message,
           stage: dryRun ? "validation" : "import",
         },
-        { status: 413 },
+        { status: 400 },
       );
     }
 
-    const parsed = await parseMultipartContentImport(form);
-    requestTimer.phase("multipart-parsed", {
+    const parsed = parseJsonContentImportBody(body);
+    requestTimer.phase("json-parsed", {
       episodeId: parsed.episodeId,
       mode: parsed.mode,
       bytesByField: parsed.bytesByField,
@@ -78,12 +73,12 @@ export async function POST(req: Request) {
 
     return await runContentImportFromParsed({
       dryRun,
-      logScope: "import",
+      logScope: "json",
       contentLength,
       parsed,
       requestTimer,
     });
   } catch (error) {
-    return contentImportErrorResponse(error, dryRun, contentLength, "import");
+    return contentImportErrorResponse(error, dryRun, contentLength, "json");
   }
 }

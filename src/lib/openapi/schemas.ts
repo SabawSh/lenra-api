@@ -332,4 +332,37 @@ export const schemas = {
       },
     },
   },
+  ContentImportJsonRequest: {
+    type: "object",
+    required: ["episodeId", "artifacts"],
+    properties: {
+      episodeId: { type: "string", format: "uuid" },
+      mode: { type: "string", enum: ["insert", "replace"], default: "insert" },
+      confirmReplace: { type: "boolean", default: false },
+      artifacts: {
+        type: "object",
+        required: ["clips"],
+        properties: {
+          clips: { type: "object", description: "Pipeline clips.json document" },
+          learningAnalysis: { type: "object" },
+          translations: {},
+          vocabularySenses: {},
+          vocabularyOccurrences: {},
+          grammarOccurrences: {},
+          grammarCatalog: {},
+        },
+      },
+    },
+  },
+  ContentImportResponse: {
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      stage: { type: "string", enum: ["preview", "imported", "validation", "import"] },
+      result: { type: "object", description: "ContentRefreshResult on success" },
+      error: { type: "string" },
+      detail: { type: "string" },
+      mysqlCode: { type: "string" },
+    },
+  },
 } as const;

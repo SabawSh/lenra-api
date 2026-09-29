@@ -25,6 +25,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/admin/content-import/episode/route.js"),
   },
   {
+    urlPattern: "/api/admin/content-import/json",
+    paramNames: [],
+    load: () => import("../../api-routes/admin/content-import/json/route.js"),
+  },
+  {
     urlPattern: "/api/admin/cover-catalog",
     paramNames: [],
     load: () => import("../../api-routes/admin/cover-catalog/route.js"),
@@ -170,11 +175,6 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/learning/advance-resume/route.js"),
   },
   {
-    urlPattern: "/api/learning/session-stats",
-    paramNames: [],
-    load: () => import("../../api-routes/learning/session-stats/route.js"),
-  },
-  {
     urlPattern: "/api/learning/bug-report",
     paramNames: [],
     load: () => import("../../api-routes/learning/bug-report/route.js"),
@@ -188,6 +188,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/learning/save-card",
     paramNames: [],
     load: () => import("../../api-routes/learning/save-card/route.js"),
+  },
+  {
+    urlPattern: "/api/learning/session-stats",
+    paramNames: [],
+    load: () => import("../../api-routes/learning/session-stats/route.js"),
   },
   {
     urlPattern: "/api/legal/accept",
@@ -253,6 +258,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/pages/admin/adaptive-teacher-users",
     paramNames: [],
     load: () => import("../../api-routes/pages/admin/adaptive-teacher-users/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/admin/media-videos",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/admin/media-videos/route.js"),
   },
   {
     urlPattern: "/api/pages/admin/overview",
@@ -323,11 +333,6 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/pages/learn/resolve",
     paramNames: [],
     load: () => import("../../api-routes/pages/learn/resolve/route.js"),
-  },
-  {
-    urlPattern: "/api/pages/admin/media-videos",
-    paramNames: [],
-    load: () => import("../../api-routes/pages/admin/media-videos/route.js"),
   },
   {
     urlPattern: "/api/pages/library/favorites",
