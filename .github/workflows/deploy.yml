@@ -1,55 +1,23 @@
-name: Deploy Lenra API
+docker load < /tmp/lenra-api.tar.gz
 
-on:
-  push:
-    branches:
-      - main
+docker stop lenra-api 2>/dev/null || true
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+docker rename lenra-api lenra-api-old 2>/dev/null || true
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+docker run -d \
+--name lenra-api \
+--restart unless-stopped \
+--network mysql-network \
+--env-file /home/ubuntu/projects/lenra-api/.env \
+-p 127.0.0.1:4000:4000 \
+lenra-api:${{ github.sha }}
 
-      - name: Build Docker image
-        run: |
-          docker build -t lenra-api:${{ github.sha }} .
+sleep 5
 
-      - name: Save Docker image
-        run: |
-          docker save lenra-api:${{ github.sha }} | gzip > lenra-api.tar.gz
+curl --fail http://127.0.0.1:4000/health
 
-      - name: Upload image to server
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "lenra-api.tar.gz"
-          target: "/tmp"
+docker rm -f lenra-api-old 2>/dev/null || true
 
-      - name: Deploy on server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            rm -f /tmp/lenra-api.tar.gz
-            docker load < /tmp/lenra-api.tar.gz
+rm -f /tmp/lenra-api.tar.gz
 
-            docker rm -f lenra-api 2>/dev/null || true
-
-            docker run -d \
-              --name lenra-api \
-              --restart unless-stopped \
-              --network mysql-network \
-              --env-file /home/ubuntu/projects/lenra-api/.env \
-              -p 127.0.0.1:4000:4000 \
-              lenra-api:${{ github.sha }}
-
-            rm -f /tmp/lenra-api.tar.gz
-
-            docker image prune -af --filter "until=168h"
+docker image prune -af --filter "until=168h"
