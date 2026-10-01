@@ -155,6 +155,41 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/episodes/[episodeId]/sections-state/route.js"),
   },
   {
+    urlPattern: "/api/flashcards",
+    paramNames: [],
+    load: () => import("../../api-routes/flashcards/route.js"),
+  },
+  {
+    urlPattern: "/api/flashcards/:id",
+    paramNames: ["id"],
+    load: () => import("../../api-routes/flashcards/[id]/route.js"),
+  },
+  {
+    urlPattern: "/api/flashcards/:id/contexts",
+    paramNames: ["id"],
+    load: () => import("../../api-routes/flashcards/[id]/contexts/route.js"),
+  },
+  {
+    urlPattern: "/api/flashcards/:id/contexts/:partId",
+    paramNames: ["id","partId"],
+    load: () => import("../../api-routes/flashcards/[id]/contexts/[partId]/route.js"),
+  },
+  {
+    urlPattern: "/api/flashcards/:id/image",
+    paramNames: ["id"],
+    load: () => import("../../api-routes/flashcards/[id]/image/route.js"),
+  },
+  {
+    urlPattern: "/api/flashcards/encounters",
+    paramNames: [],
+    load: () => import("../../api-routes/flashcards/encounters/route.js"),
+  },
+  {
+    urlPattern: "/api/flashcards/search",
+    paramNames: [],
+    load: () => import("../../api-routes/flashcards/search/route.js"),
+  },
+  {
     urlPattern: "/api/gamification/progression",
     paramNames: [],
     load: () => import("../../api-routes/gamification/progression/route.js"),
@@ -178,6 +213,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/learning/bug-report",
     paramNames: [],
     load: () => import("../../api-routes/learning/bug-report/route.js"),
+  },
+  {
+    urlPattern: "/api/learning/clip-playback",
+    paramNames: [],
+    load: () => import("../../api-routes/learning/clip-playback/route.js"),
   },
   {
     urlPattern: "/api/learning/grammar",
@@ -353,6 +393,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/pages/movies/:id/sections",
     paramNames: ["id"],
     load: () => import("../../api-routes/pages/movies/[id]/sections/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/my-words",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/my-words/route.js"),
   },
   {
     urlPattern: "/api/pages/series/:id",

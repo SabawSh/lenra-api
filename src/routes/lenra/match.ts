@@ -40,7 +40,19 @@ const compiled: Array<{
 
 export function compileRoutes(entries: LenraRouteEntry[]): void {
   compiled.length = 0;
-  for (const entry of entries) {
+  // Prefer static path segments over `:param` so
+  // `/api/flashcards/search` wins over `/api/flashcards/:id`.
+  const ranked = [...entries].sort((a, b) => {
+    const staticScore = (pattern: string) =>
+      pattern
+        .split("/")
+        .filter(Boolean)
+        .reduce((score, part) => score + (part.startsWith(":") ? 0 : 1), 0);
+    const diff = staticScore(b.urlPattern) - staticScore(a.urlPattern);
+    if (diff !== 0) return diff;
+    return a.urlPattern.localeCompare(b.urlPattern);
+  });
+  for (const entry of ranked) {
     const names = [...entry.paramNames];
     compiled.push({
       entry,
