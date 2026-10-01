@@ -147,14 +147,8 @@ export function subscribeSpeechChainInspector(listener: Listener): () => void {
   };
 }
 
+/** Speech chain inspector / replay dev tools removed — trace collection off. */
 export function speechChainTraceEnabled(): boolean {
-  if (typeof process === "undefined") return true;
-  const env = process.env;
-  if (env.NEXT_PUBLIC_SPEECH_CHAIN_TRACE === "0") return false;
-  if (env.NEXT_PUBLIC_SPEECH_CHAIN_TRACE === "1") return true;
-  if (env.NEXT_PUBLIC_STT_FALLBACK_DEBUG === "1") return true;
-  if (env.VOICE_MATCH_DEBUG === "1") return true;
-  if (env.NODE_ENV === "development") return true;
   return false;
 }
 

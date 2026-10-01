@@ -385,14 +385,22 @@ export async function loadMovieLearningBatchPreview(params: {
     const thumb = thumbRaw ? resolvePublicMediaUrl(thumbRaw) : null;
     const savedCardId = savedByClip.get(partId) ?? null;
 
+    const hlsForReplay = completed
+      ? part.hlsManifestUrl?.trim() || null
+      : null;
+    const videoForReplay = completed
+      ? part.videoUrl?.trim() || null
+      : null;
+
     clipsRaw.push({
       partId,
       clipIndex,
       englishText: part.text?.trim() || `Clip ${clipIndex}`,
       translationText: pickFaOrFirstTranslation(part.translations),
       thumbnailUrl: thumb,
-      hlsManifestUrl: null,
-      videoUrl: null,
+      /** Replay only — thumbs stay on pipeline image (no HLS capture on list). */
+      hlsManifestUrl: hlsForReplay,
+      videoUrl: videoForReplay,
       coverFallbackUrl: hero.coverUrl,
       state,
       displayKind,

@@ -50,11 +50,6 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/admin/seed-catalog/route.js"),
   },
   {
-    urlPattern: "/api/admin/speech-replay",
-    paramNames: [],
-    load: () => import("../../api-routes/admin/speech-replay/route.js"),
-  },
-  {
     urlPattern: "/api/admin/update-cover",
     paramNames: [],
     load: () => import("../../api-routes/admin/update-cover/route.js"),

@@ -6,6 +6,7 @@ import {
   PutObjectCommand,
   S3Client,
   type CORSRule,
+  type PutObjectCommandInput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -99,6 +100,21 @@ export function mediaPutObjectAclFields(
 ): { ACL: typeof S3_ACL_PUBLIC_READ } | Record<string, never> {
   const apply = publicRead ?? wantPublicReadAcl();
   return apply ? { ACL: S3_ACL_PUBLIC_READ } : {};
+}
+
+/** Some buckets reject canned ACL; retry once without ACL (bucket policy must allow public GET). */
+export async function putObjectWithAclFallback(
+  client: S3Client,
+  input: PutObjectCommandInput,
+  opts?: { publicRead?: boolean },
+): Promise<void> {
+  const aclFields = mediaPutObjectAclFields(opts?.publicRead);
+  try {
+    await client.send(new PutObjectCommand({ ...input, ...aclFields }));
+  } catch (first) {
+    if (Object.keys(aclFields).length === 0) throw first;
+    await client.send(new PutObjectCommand(input));
+  }
 }
 
 /**

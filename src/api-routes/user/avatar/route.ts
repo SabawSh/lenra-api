@@ -4,9 +4,8 @@ import {
   buildMediaPublicUrl,
   createMediaS3Client,
   getS3Bucket,
-  mediaPutObjectAclFields,
+  putObjectWithAclFallback,
 } from "@/lib/storage/cloud-s3";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
@@ -57,19 +56,23 @@ export async function POST(req: Request) {
 
   try {
     const client = createMediaS3Client();
-    await client.send(
-      new PutObjectCommand({
-        Bucket: getS3Bucket(),
-        Key: key,
-        Body: buffer,
-        ContentType: contentType,
-        ...mediaPutObjectAclFields(),
-      }),
-    );
+    await putObjectWithAclFallback(client, {
+      Bucket: getS3Bucket(),
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+    });
   } catch (e) {
     console.error("[avatar/upload] S3 error", e);
+    const detail =
+      process.env.NODE_ENV === "development" && e instanceof Error
+        ? e.message.slice(0, 200)
+        : undefined;
     return NextResponse.json(
-      { error: "Storage upload failed. Please try again." },
+      {
+        error: "Storage upload failed. Please try again.",
+        ...(detail ? { detail } : {}),
+      },
       { status: 502 },
     );
   }
@@ -84,4 +87,21 @@ export async function POST(req: Request) {
     console.warn("[avatar/upload] revalidateTag skipped", e);
   }
   return NextResponse.json({ ok: true, avatarUrl });
+}
+
+export async function DELETE() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  await updateUserAvatarUrl(user.id, null);
+
+  try {
+    revalidateTag("user", { expire: 0 });
+  } catch (e) {
+    console.warn("[avatar/remove] revalidateTag skipped", e);
+  }
+
+  return NextResponse.json({ ok: true, avatarUrl: null });
 }

@@ -48,11 +48,12 @@ export async function PATCH(req: Request) {
     }
     await updateUserProfileName(user.id, name);
   } else if (section === "userInfo") {
-    const name = String(data.name ?? "").trim().slice(0, 80);
     const username = String(data.username ?? "").trim().toLowerCase();
-    if (!name) {
-      return NextResponse.json({ ok: false, error: "Name cannot be empty" });
-    }
+    const nameRaw = data.name;
+    const name =
+      typeof nameRaw === "string" && nameRaw.trim()
+        ? nameRaw.trim().slice(0, 80)
+        : null;
     if (!USERNAME_RE.test(username)) {
       return NextResponse.json({
         ok: false,
@@ -62,7 +63,7 @@ export async function PATCH(req: Request) {
     try {
       await updateUserDisplayNameAndUsername({
         userId: user.id,
-        name,
+        name: name ?? user.name ?? username,
         username,
       });
     } catch (e: unknown) {
