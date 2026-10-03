@@ -284,12 +284,27 @@ export async function listFullyCompletedSectionsOrdered(
         : await getVideoPartsOrderMeta(bucket.scopeId);
     if (curriculumParts.length === 0) continue;
 
+    // Authoritative pool size is the loaded curriculum rows. A separate COUNT
+    // can disagree with a stale/wrong cache and must not abort skill updates.
+    const totalParts = curriculumParts.length;
+    if (totalParts !== bucket.totalParts) {
+      console.warn(
+        "[section-skill] curriculum pool size != countParts; using loaded pool",
+        {
+          scopeId: bucket.scopeId,
+          kind: bucket.kind,
+          loaded: totalParts,
+          counted: bucket.totalParts,
+        },
+      );
+    }
+
     const globalOrder = await getAdaptiveEpisodeOrder({
       episodeParts: curriculumParts,
       user,
       context: {
         curriculumId: scope.curriculumId,
-        totalParts: bucket.totalParts,
+        totalParts,
       },
     });
 
@@ -309,7 +324,7 @@ export async function listFullyCompletedSectionsOrdered(
           bucket.kind,
           bucket.scopeId,
           catalog[i]!.sectionIndex,
-          bucket.totalParts,
+          totalParts,
           latestCompleted,
         ),
       );
@@ -468,7 +483,17 @@ export async function applySectionSkillUpdateOnTransition(
   userId: UserId,
   ctx: PartSectionAdaptiveContext,
 ): Promise<void> {
-  const completed = await listFullyCompletedSectionsOrdered(userId);
+  let completed: CompletedSectionCandidate[];
+  try {
+    completed = await listFullyCompletedSectionsOrdered(userId);
+  } catch (err) {
+    console.error("[section-skill] listFullyCompletedSectionsOrdered failed", {
+      userId,
+      sectionKey: ctx.sectionKey,
+      err,
+    });
+    return;
+  }
   for (const item of completed) {
     const applied = await isAdaptiveSkillSectionApplied(
       userId,

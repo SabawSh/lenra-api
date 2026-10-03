@@ -35,7 +35,6 @@ async function peekDictionary(lemma: string) {
     FROM dictionary_senses
     WHERE dictionary_entry_id = ?
     ORDER BY sense_order ASC
-    LIMIT 8
     `,
     [entry.id],
   );

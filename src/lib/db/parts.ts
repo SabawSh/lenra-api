@@ -190,24 +190,47 @@ export const createPart = async (
   return result;
 };
 
-/** Lean curriculum rows for adaptive ordering — small enough for Next.js Data Cache. */
-const getPartOrderMetaByVideoIdCached = unstable_cache(
-  async (
-    videoId: string,
-    _contentStamp: string,
-  ): Promise<videoQueries.PartOrderMeta[]> => {
-    return videoQueries.listPartOrderMetaByVideoId(videoId);
-  },
-  ["part-order-meta-by-video"],
-  { revalidate: 864000, tags: ["videos"] },
-);
+/**
+ * Process-local curriculum cache keyed by scope + content stamp.
+ * Do NOT use next/cache unstable_cache here: under the Hono/tsx API runtime it
+ * ignores dynamic args and returns the first video/episode's rows for every call
+ * (reproduced as Pursuit 1508 → Coraline 759 contamination).
+ */
+type OrderMetaCacheEntry = {
+  stamp: string;
+  rows: videoQueries.PartOrderMeta[];
+};
+
+const episodeOrderMetaCache = new Map<string, OrderMetaCacheEntry>();
+const videoOrderMetaCache = new Map<string, OrderMetaCacheEntry>();
+
+async function loadEpisodeOrderMetaFresh(
+  episodeId: string,
+  stamp: string,
+): Promise<videoQueries.PartOrderMeta[]> {
+  const hit = episodeOrderMetaCache.get(episodeId);
+  if (hit && hit.stamp === stamp) return hit.rows;
+  const rows = await videoQueries.listPartOrderMetaByEpisodeId(episodeId);
+  episodeOrderMetaCache.set(episodeId, { stamp, rows });
+  return rows;
+}
+
+async function loadVideoOrderMetaFresh(
+  videoId: string,
+  stamp: string,
+): Promise<videoQueries.PartOrderMeta[]> {
+  const hit = videoOrderMetaCache.get(videoId);
+  if (hit && hit.stamp === stamp) return hit.rows;
+  const rows = await videoQueries.listPartOrderMetaByVideoId(videoId);
+  videoOrderMetaCache.set(videoId, { stamp, rows });
+  return rows;
+}
 
 /** @deprecated Prefer {@link getVideoPartsOrderMeta} which stamps the cache key. */
 export async function getPartOrderMetaByVideoId(
   videoId: string,
 ): Promise<videoQueries.PartOrderMeta[]> {
-  const stamp = await videoQueries.getPartOrderCacheStampForVideo(videoId);
-  return getPartOrderMetaByVideoIdCached(videoId, stamp);
+  return getVideoPartsOrderMeta(videoId);
 }
 
 /** Uncached — full rows exceed the 2MB Next.js Data Cache limit for long videos. */
@@ -234,23 +257,11 @@ export async function getPartsForSection({
   });
 }
 
-const getPartOrderMetaByEpisodeIdCached = unstable_cache(
-  async (
-    episodeId: string,
-    _contentStamp: string,
-  ): Promise<videoQueries.PartOrderMeta[]> => {
-    return videoQueries.listPartOrderMetaByEpisodeId(episodeId);
-  },
-  ["part-order-meta-by-episode"],
-  { revalidate: 864000, tags: ["episodes"] },
-);
-
 /** @deprecated Prefer {@link getEpisodePartsOrderMeta} which stamps the cache key. */
 export async function getPartOrderMetaByEpisodeId(
   episodeId: string,
 ): Promise<videoQueries.PartOrderMeta[]> {
-  const stamp = await videoQueries.getPartOrderCacheStampForEpisode(episodeId);
-  return getPartOrderMetaByEpisodeIdCached(episodeId, stamp);
+  return getEpisodePartsOrderMeta(episodeId);
 }
 
 /** Uncached — full rows exceed the 2MB Next.js Data Cache limit for long episodes. */
@@ -263,7 +274,7 @@ export async function getEpisodePartsOrderMeta(
   episodeId: string,
 ): Promise<videoQueries.PartOrderMeta[]> {
   const stamp = await videoQueries.getPartOrderCacheStampForEpisode(episodeId);
-  return getPartOrderMetaByEpisodeIdCached(episodeId, stamp);
+  return loadEpisodeOrderMetaFresh(episodeId, stamp);
 }
 
 /** Standalone video curriculum pool (lean) for global adaptive ordering. */
@@ -271,7 +282,7 @@ export async function getVideoPartsOrderMeta(
   videoId: string,
 ): Promise<videoQueries.PartOrderMeta[]> {
   const stamp = await videoQueries.getPartOrderCacheStampForVideo(videoId);
-  return getPartOrderMetaByVideoIdCached(videoId, stamp);
+  return loadVideoOrderMetaFresh(videoId, stamp);
 }
 
 /** Hydrate a section playlist slice with full part rows + translations. */
