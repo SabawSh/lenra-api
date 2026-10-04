@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { isSiteMediaAdmin } from "@/lib/auth/siteAdmin";
 import { getVideos } from "@/lib/db/videos";
+import { assertMediaUploadAllowed } from "@/lib/storage/upload-auth";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  const user = await getCurrentUser();
-  if (!user || !isSiteMediaAdmin(user)) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+export async function GET(req: Request) {
+  const denied = await assertMediaUploadAllowed(req);
+  if (denied) return denied;
   const videos = await getVideos();
   return NextResponse.json({ videos });
 }
