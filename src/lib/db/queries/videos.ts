@@ -420,6 +420,20 @@ export type VideoMetaPatch = {
   imdbRating?: number | null;
   isLiked?: boolean;
   releaseAt?: Date;
+  description?: string | null;
+  coverUrl?: string | null;
+  sourceVideoUrl?: string | null;
+  sourceSubtitleUrl?: string | null;
+  defaultAudioLanguage?: string;
+};
+
+export type EpisodeMetaPatch = {
+  title?: string;
+  description?: string | null;
+  coverUrl?: string | null;
+  releaseAt?: Date;
+  sourceVideoUrl?: string | null;
+  sourceSubtitleUrl?: string | null;
 };
 
 export async function patchVideoScalars(
@@ -452,10 +466,69 @@ export async function patchVideoScalars(
     sets.push("release_at = ?");
     vals.push(patch.releaseAt);
   }
+  if (patch.description !== undefined) {
+    sets.push("description = ?");
+    vals.push(patch.description);
+  }
+  if (patch.coverUrl !== undefined) {
+    sets.push("cover_url = ?");
+    vals.push(patch.coverUrl);
+  }
+  if (patch.sourceVideoUrl !== undefined) {
+    sets.push("source_video_url = ?");
+    vals.push(patch.sourceVideoUrl);
+  }
+  if (patch.sourceSubtitleUrl !== undefined) {
+    sets.push("source_subtitle_url = ?");
+    vals.push(patch.sourceSubtitleUrl);
+  }
+  if (patch.defaultAudioLanguage !== undefined) {
+    sets.push("default_audio_language = ?");
+    vals.push(patch.defaultAudioLanguage);
+  }
   if (sets.length === 0) return false;
   vals.push(id);
   const [hdr] = await pool.execute<ResultSetHeader>(
     `UPDATE videos SET ${sets.join(", ")} WHERE id = ?`,
+    vals,
+  );
+  return hdr.affectedRows > 0;
+}
+
+export async function patchEpisodeScalars(
+  id: string,
+  patch: EpisodeMetaPatch,
+): Promise<boolean> {
+  const sets: string[] = [];
+  const vals: SqlScalar[] = [];
+  if (patch.title !== undefined) {
+    sets.push("title = ?");
+    vals.push(patch.title.slice(0, 191));
+  }
+  if (patch.description !== undefined) {
+    sets.push("description = ?");
+    vals.push(patch.description);
+  }
+  if (patch.coverUrl !== undefined) {
+    sets.push("cover_url = ?");
+    vals.push(patch.coverUrl);
+  }
+  if (patch.releaseAt !== undefined) {
+    sets.push("release_at = ?");
+    vals.push(patch.releaseAt);
+  }
+  if (patch.sourceVideoUrl !== undefined) {
+    sets.push("source_video_url = ?");
+    vals.push(patch.sourceVideoUrl);
+  }
+  if (patch.sourceSubtitleUrl !== undefined) {
+    sets.push("source_subtitle_url = ?");
+    vals.push(patch.sourceSubtitleUrl);
+  }
+  if (sets.length === 0) return false;
+  vals.push(id);
+  const [hdr] = await pool.execute<ResultSetHeader>(
+    `UPDATE episodes SET ${sets.join(", ")} WHERE id = ?`,
     vals,
   );
   return hdr.affectedRows > 0;

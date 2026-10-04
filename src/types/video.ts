@@ -6,7 +6,12 @@ import type {
   VideoType,
 } from "./schema.js";
 
-export type { EnglishLevel, PartDifficulty, ProcessingStatus, VideoType };
+export type {
+  EnglishLevel,
+  PartDifficulty,
+  ProcessingStatus,
+  VideoType,
+};
 
 /**
  * A single token stored in `parts.tokens` (JSON column).

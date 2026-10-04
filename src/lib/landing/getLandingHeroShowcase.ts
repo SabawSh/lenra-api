@@ -18,7 +18,7 @@ export type LandingHeroShowcaseItem = {
   levels: string[];
 };
 
-const SHOWCASE_LIMIT = 6;
+const SHOWCASE_LIMIT = 9;
 
 async function loadLandingHeroShowcase(): Promise<LandingHeroShowcaseItem[]> {
   try {
