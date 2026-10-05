@@ -15,7 +15,7 @@ import {
   classifyDifficultyZone,
   zoneBounds,
 } from "@/lib/skill-engine/ordering/difficultyZones";
-import { windowedAdaptiveOrder } from "@/lib/skill-engine/ordering/windowedAdaptiveOrder";
+import { sortAdaptiveParts } from "@/lib/skill-engine/ordering/sortAdaptiveParts";
 import type { AdaptivePartInput } from "@/lib/skill-engine/domain/types";
 import { DEFAULT_ADAPTIVE_SELECTION_CONFIG } from "@/lib/skill-engine/policy/adaptiveSelectionConfig";
 import {
@@ -136,17 +136,18 @@ async function main() {
       "atomic path preserves part identity; Adaptive Teacher does not merge",
     );
 
-    // Continuity-first reorder: extreme outside stays in the set (not deleted);
-    // continuityPenaltyPerStep=20 keeps story order dominant within the window.
-    const ordered = windowedAdaptiveOrder(
-      [part(10, 56), part(11, 95), part(12, 60), part(13, 50)],
-      skill,
-      cfg,
-    );
-    assert.equal(ordered.length, 4);
+    // Learn playlist = parts.order only — difficulty never reorders clips.
+    // Difficulty adapts how the user practices a scene, not which scene they watch.
+    const shuffled = [part(12, 60), part(10, 56), part(13, 50), part(11, 95)];
+    const ordered = sortAdaptiveParts({
+      parts: shuffled,
+      userSkill: skill,
+      config: cfg,
+    });
     assert.deepEqual(
-      [...ordered.map((p) => p.id)].sort(),
+      ordered.map((p) => p.id),
       ["p-10", "p-11", "p-12", "p-13"],
+      "Learn order must exactly match parts.order",
     );
     assert.ok(ordered.some((p) => p.difficultyScore === 95));
 

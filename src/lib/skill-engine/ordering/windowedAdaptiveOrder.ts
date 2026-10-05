@@ -122,8 +122,12 @@ function pickNeededZone(
 }
 
 /**
- * Continuity-first adaptive order: completed / pre-anchor units stay fixed;
- * upcoming units may shift by at most ~1 slot within each local window.
+ * Legacy difficulty-window reorderer.
+ *
+ * **Not used for the main Learn playlist.** Learn order is `parts.order` only
+ * via `sortAdaptiveParts` / `getAdaptiveEpisodeOrder`.
+ * Difficulty adapts how the user practices a scene, not which scene they watch.
+ * Kept for diagnostics / experiments; do not wire back into Learn.
  */
 export function windowedAdaptiveOrder(
   parts: AdaptivePartInput[],

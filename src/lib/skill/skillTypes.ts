@@ -21,7 +21,10 @@ export type LockState =
 export type SkillResult = {
   skill: number;
   source: SkillSource;
-  /** System behavior: adaptive ordering vs canonical section order. */
+  /**
+   * Historical flag: previously switched adaptive vs canonical clip order.
+   * Learn playlist is always `parts.order`; ability adapts practice only.
+   */
   mode: SkillMode;
   /** UX-facing progression stage. */
   stage: SkillStage;
