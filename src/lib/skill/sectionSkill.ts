@@ -1,6 +1,7 @@
 import {
   findUserOverallSkill,
   isAdaptiveSkillSectionApplied,
+  seedOverallSkillFromOnboardingIfAbsent,
   setUserOverallSkill,
   tryRecordAdaptiveSkillSection,
 } from "@/lib/db/queries/userAdaptiveSkill";
@@ -14,12 +15,15 @@ import {
 import { pool } from "@/lib/db/connection";
 import {
   clampSkill,
-  priorFromEnglishLevel,
+  SAFE_DEFAULT_SKILL,
   SKILL_SECTION_EMA_ALPHA,
   SKILL_SECTION_MAX_DELTA,
 } from "@/lib/skill/constants";
 import { calibrateSkillTarget } from "@/lib/skill/calibrateSkillTarget";
-import { buildAdaptiveTeacherDecision } from "@/lib/skill/adaptiveTeacherDecision";
+import {
+  buildAdaptiveTeacherDecision,
+  type AdaptiveTeacherDecision,
+} from "@/lib/skill/adaptiveTeacherDecision";
 import type { PartSectionAdaptiveContext } from "@/lib/skill/resolvePartSectionScope";
 import {
   getAdaptiveEpisodeOrder,
@@ -411,23 +415,26 @@ async function sumSectionAttempts(
 async function resolvePreviousSkill(userId: UserId): Promise<number> {
   const stored = await findUserOverallSkill(userId);
   if (stored != null) return clampSkill(stored);
-  const englishLevel = await findUserEnglishLevelById(userId);
-  return clampSkill(priorFromEnglishLevel(englishLevel));
+  const seeded = await seedOverallSkillFromOnboardingIfAbsent(userId);
+  if (seeded != null) return seeded;
+  return SAFE_DEFAULT_SKILL;
 }
 
 async function applyEmaForSection(
   userId: UserId,
   ctx: PartSectionAdaptiveContext,
-): Promise<{ previousSkill: number; sectionScore: number; newSkill: number } | null> {
+): Promise<{
+  previousSkill: number;
+  sectionScore: number;
+  newSkill: number;
+  decision: AdaptiveTeacherDecision;
+} | null> {
   const inserted = await tryRecordAdaptiveSkillSection(userId, ctx.sectionKey);
   if (!inserted) return null;
 
   const previousSkill = await resolvePreviousSkill(userId);
   const mastery = await computeSectionMasteryBreakdown(userId, ctx);
   const sectionScore = mastery.sectionScore;
-
-  if (mastery.qualified) {
-  }
 
   // Anchor the EMA target to the DIFFICULTY the learner handled, not their raw
   // score, then cap how far skill can move in one section. Together these stop
@@ -443,7 +450,6 @@ async function applyEmaForSection(
     Math.min(SKILL_SECTION_MAX_DELTA, emaStepRaw),
   );
   const newSkill = clampSkill(previousSkill + emaStep);
-  const skillDelta = newSkill - previousSkill;
   const totalAttempts = await sumSectionAttempts(userId, ctx);
 
   await setUserOverallSkill(userId, newSkill);
@@ -471,18 +477,25 @@ async function applyEmaForSection(
     });
   });
 
-  return { previousSkill, sectionScore, newSkill };
+  return {
+    previousSkill,
+    sectionScore,
+    newSkill,
+    decision: teacherDecision,
+  };
 }
 
 /**
  * Apply section EMA updates after a section transitions incomplete → complete.
  * Also catches up any earlier completed sections missing from the skill log (migration).
  * Must NOT be called per-clip — only from the performance route transition guard.
+ *
+ * Returns the latest band change (UPGRADE/DOWNGRADE) applied in this call, if any.
  */
 export async function applySectionSkillUpdateOnTransition(
   userId: UserId,
   ctx: PartSectionAdaptiveContext,
-): Promise<void> {
+): Promise<AdaptiveTeacherDecision | null> {
   let completed: CompletedSectionCandidate[];
   try {
     completed = await listFullyCompletedSectionsOrdered(userId);
@@ -492,16 +505,26 @@ export async function applySectionSkillUpdateOnTransition(
       sectionKey: ctx.sectionKey,
       err,
     });
-    return;
+    return null;
   }
+
+  let bandChange: AdaptiveTeacherDecision | null = null;
   for (const item of completed) {
     const applied = await isAdaptiveSkillSectionApplied(
       userId,
       item.sectionKey,
     );
     if (!applied) {
-      await applyEmaForSection(userId, item.ctx);
+      const result = await applyEmaForSection(userId, item.ctx);
+      if (
+        result &&
+        (result.decision.decision === "UPGRADE" ||
+          result.decision.decision === "DOWNGRADE")
+      ) {
+        bandChange = result.decision;
+      }
     }
     if (item.sectionKey === ctx.sectionKey) break;
   }
+  return bandChange;
 }

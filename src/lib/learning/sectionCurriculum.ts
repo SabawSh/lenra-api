@@ -29,7 +29,6 @@ import {
 } from "@/lib/learning/adaptiveEpisodeOrdering";
 import { listProgressSliceForParts } from "@/lib/db/queries/userPartProgress";
 import { resolveSkillForAdaptiveOrdering } from "@/lib/skill/computeOverallSkill";
-import { getBootstrapSkillFromEnglishLevel } from "@/lib/skill/onboardingSkill";
 import { assertSkillResult } from "@/lib/skill/skillTypes";
 import type { AtomicPartInput } from "@/lib/skill-engine/learning-units";
 import {
@@ -51,6 +50,7 @@ import type { Part } from "@/types/video";
 import {
   curriculumVersionFromPartOrder,
   playlistHasMergedLearningUnits,
+  playlistViolatesStoryOrder,
   reconstructPlaylistFromBlueprint,
   unitPartIdsFromLearningUnits,
 } from "@/lib/learning/materializedSectionBlueprint";
@@ -193,10 +193,8 @@ async function prefetchCatalogBuildContext(
     () => resolveSkillForAdaptiveOrdering(user.id),
   );
   assertSkillResult(skillResult);
-  const prefetchedUserSkill =
-    skillResult.stage === "new_user"
-      ? getBootstrapSkillFromEnglishLevel(user.englishLevel)
-      : skillResult.skill;
+  // Always Adaptive Teacher state (seeded once from onboarding if needed).
+  const prefetchedUserSkill = skillResult.skill;
 
   return {
     prefetchedUserSkill,
@@ -378,10 +376,10 @@ export async function getOrMaterializeProgressionSection(params: {
   // Merged-unit blueprints from the old skill-merge policy are also stale under
   // LEARNER_FORCE_ATOMIC_UNITS — drop that section header only, then rematerialize.
   if (existing && existing.atomicPartCount > 0) {
-    if (
-      forceAtomicUnits &&
-      playlistHasMergedLearningUnits(existing)
-    ) {
+    const staleStoryOrder = playlistViolatesStoryOrder(existing);
+    const staleMerged =
+      forceAtomicUnits && playlistHasMergedLearningUnits(existing);
+    if (staleMerged || staleStoryOrder) {
       const stale = await findMaterializedSectionHeader({
         userId: user.id,
         sectionIndex,

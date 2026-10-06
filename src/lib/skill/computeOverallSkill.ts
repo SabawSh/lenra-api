@@ -3,15 +3,11 @@ import {
   findUserOverallSkill,
   markSkillBackfillDone,
   releaseSkillBackfillLock,
+  seedOverallSkillFromOnboardingIfAbsent,
 } from "@/lib/db/queries/userAdaptiveSkill";
-import { findUserEnglishLevelById } from "@/lib/db/queries/users";
 import type { UserId } from "@/types/schema";
 import { buildSkillResult } from "@/lib/skill/buildSkillResult";
-import {
-  clampSkill,
-  priorFromEnglishLevel,
-  SAFE_DEFAULT_SKILL,
-} from "@/lib/skill/constants";
+import { clampSkill, SAFE_DEFAULT_SKILL } from "@/lib/skill/constants";
 import {
   backfillSkillFromCompletedSections,
   userHasFullyCompletedSection,
@@ -29,6 +25,10 @@ export { buildGuestSkillResult } from "@/lib/skill/buildSkillResult";
 /**
  * Lightweight skill read for catalog / ordering paths.
  * Must NOT probe section completion — that would recurse into catalog builds.
+ *
+ * Runtime ability always comes from Adaptive Teacher state (`overall_skill`).
+ * Onboarding english_level may seed that column once; it is never re-read for
+ * challenge / chunking / support decisions after seed.
  */
 export async function resolveSkillForAdaptiveOrdering(
   userId: string,
@@ -49,12 +49,12 @@ export async function resolveSkillForAdaptiveOrdering(
     });
   }
 
-  const englishLevel = await findUserEnglishLevelById(uid);
-  if (englishLevel != null) {
+  const seeded = await seedOverallSkillFromOnboardingIfAbsent(uid);
+  if (seeded != null) {
     return buildSkillResult(uid, {
-      skill: clampSkill(priorFromEnglishLevel(englishLevel)),
+      skill: clampSkill(seeded),
       source: "cold_start",
-      hasPersistedSkill: false,
+      hasPersistedSkill: true,
       hasSections: false,
       backfillTriggered: false,
       skillNeedsBackfill: false,
@@ -133,11 +133,11 @@ export async function resolveOverallSkill(userId: string): Promise<SkillResult> 
         });
       }
 
-      const englishLevel = await findUserEnglishLevelById(uid);
+      const seeded = await seedOverallSkillFromOnboardingIfAbsent(uid);
       return buildSkillResult(uid, {
-        skill: clampSkill(priorFromEnglishLevel(englishLevel)),
-        source: "cold_start",
-        hasPersistedSkill: false,
+        skill: clampSkill(seeded ?? SAFE_DEFAULT_SKILL),
+        source: seeded != null ? "cold_start" : "no_history",
+        hasPersistedSkill: seeded != null,
         hasSections: true,
         backfillTriggered: false,
         skillNeedsBackfill: true,
@@ -175,11 +175,11 @@ export async function resolveOverallSkill(userId: string): Promise<SkillResult> 
         { userId: uid, backfillTriggered, lockState },
       );
 
-      const englishLevel = await findUserEnglishLevelById(uid);
+      const seeded = await seedOverallSkillFromOnboardingIfAbsent(uid);
       return buildSkillResult(uid, {
-        skill: clampSkill(priorFromEnglishLevel(englishLevel)),
-        source: "cold_start",
-        hasPersistedSkill: false,
+        skill: clampSkill(seeded ?? SAFE_DEFAULT_SKILL),
+        source: seeded != null ? "cold_start" : "no_history",
+        hasPersistedSkill: seeded != null,
         hasSections: true,
         backfillTriggered,
         skillNeedsBackfill: true,
@@ -192,11 +192,11 @@ export async function resolveOverallSkill(userId: string): Promise<SkillResult> 
       "[adaptive-teacher] unexpected backfill lock state with no persisted skill",
       { userId: uid, lock, lockState },
     );
-    const englishLevel = await findUserEnglishLevelById(uid);
+    const seeded = await seedOverallSkillFromOnboardingIfAbsent(uid);
     return buildSkillResult(uid, {
-      skill: clampSkill(priorFromEnglishLevel(englishLevel)),
-      source: "cold_start",
-      hasPersistedSkill: false,
+      skill: clampSkill(seeded ?? SAFE_DEFAULT_SKILL),
+      source: seeded != null ? "cold_start" : "no_history",
+      hasPersistedSkill: seeded != null,
       hasSections: true,
       backfillTriggered: false,
       skillNeedsBackfill: true,
@@ -205,12 +205,12 @@ export async function resolveOverallSkill(userId: string): Promise<SkillResult> 
     });
   }
 
-  const englishLevel = await findUserEnglishLevelById(uid);
-  if (englishLevel != null) {
+  const seeded = await seedOverallSkillFromOnboardingIfAbsent(uid);
+  if (seeded != null) {
     return buildSkillResult(uid, {
-      skill: clampSkill(priorFromEnglishLevel(englishLevel)),
+      skill: clampSkill(seeded),
       source: "cold_start",
-      hasPersistedSkill: false,
+      hasPersistedSkill: true,
       hasSections: false,
       backfillTriggered: false,
       skillNeedsBackfill: false,

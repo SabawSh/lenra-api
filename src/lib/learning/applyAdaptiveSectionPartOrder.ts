@@ -3,10 +3,7 @@ import type {
   AdaptiveOrderUser,
   EpisodePartForAdaptiveOrder,
 } from "@/lib/learning/adaptiveEpisodeOrdering";
-import {
-  PARTS_PER_SECTION,
-  sliceSectionFromGlobalOrder,
-} from "@/lib/learning/sections";
+import { sliceSectionFromGlobalOrder } from "@/lib/learning/sections";
 
 export type SectionPartForAdaptiveOrder = EpisodePartForAdaptiveOrder;
 
@@ -41,9 +38,8 @@ function partSliceLogFields<T extends SectionPartForAdaptiveOrder>(
 /**
  * Builds the section session playlist from **precomputed global order** (index slice only).
  *
- * Global order is movie story order (`parts.order`) from `getAdaptiveEpisodeOrder`.
- * Difficulty adapts how the user practices a scene, not which scene they watch.
- * This function never reorders by difficulty — index slice only.
+ * Sorting happens only in `getAdaptiveEpisodeOrder` on the full curriculum pool.
+ * This function never calls `sortAdaptiveParts` / `compareAdaptiveParts`.
  */
 export function applyAdaptiveSectionPartOrder<
   T extends SectionPartForAdaptiveOrder,

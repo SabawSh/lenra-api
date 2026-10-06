@@ -200,10 +200,19 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
   }
 
-  const deleted = await deleteUserById(userId);
-  if (!deleted) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  try {
+    const deleted = await deleteUserById(userId);
+    if (!deleted) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[admin/user-plans] DELETE failed", { userId, message });
+    return NextResponse.json(
+      { error: message || "Delete failed" },
+      { status: 500 },
+    );
   }
-  return NextResponse.json({ ok: true });
 }
 

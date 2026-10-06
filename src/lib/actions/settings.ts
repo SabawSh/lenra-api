@@ -96,6 +96,10 @@ export async function updateSettings(
       contentPrefsJson,
       dailyGoalMinutes: data.dailyGoalMinutes,
     });
+    const { seedOverallSkillFromOnboardingIfAbsent } = await import(
+      "@/lib/db/queries/userAdaptiveSkill"
+    );
+    await seedOverallSkillFromOnboardingIfAbsent(session.userId);
   }
 
   revalidateTag("user", { expire: 0 });

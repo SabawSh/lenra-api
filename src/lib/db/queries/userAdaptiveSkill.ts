@@ -1,4 +1,6 @@
 import { pool } from "@/lib/db/connection";
+import { findUserEnglishLevelById } from "@/lib/db/queries/users";
+import { clampSkill, priorFromEnglishLevel } from "@/lib/skill/constants";
 import type { UserId } from "@/types/schema";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
@@ -88,6 +90,35 @@ export async function setUserOverallSkill(
     `UPDATE users SET overall_skill = ? WHERE id = ?`,
     [skill, userId],
   );
+}
+
+/**
+ * One-time Adaptive Teacher seed from onboarding english_level.
+ * Never overwrites an existing overall_skill — progression stays independent of onboarding.
+ * Returns the skill after seed (or existing), or null when neither skill nor level exists.
+ */
+export async function seedOverallSkillFromOnboardingIfAbsent(
+  userId: UserId,
+): Promise<number | null> {
+  const existing = await findUserOverallSkill(userId);
+  if (existing != null) return Number(existing);
+
+  const englishLevel = await findUserEnglishLevelById(userId);
+  if (englishLevel == null) return null;
+
+  const seed = clampSkill(priorFromEnglishLevel(englishLevel));
+  await pool.execute<ResultSetHeader>(
+    `
+    UPDATE users
+    SET overall_skill = ?
+    WHERE id = ?
+      AND overall_skill IS NULL
+    `,
+    [seed, userId],
+  );
+
+  const after = await findUserOverallSkill(userId);
+  return after != null ? Number(after) : seed;
 }
 
 function expiresAtFromNow(): Date {

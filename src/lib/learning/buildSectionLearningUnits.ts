@@ -18,7 +18,6 @@ import {
   buildGuestSkillResult,
   resolveOverallSkill,
 } from "@/lib/skill/computeOverallSkill";
-import { getBootstrapSkillFromEnglishLevel } from "@/lib/skill/onboardingSkill";
 import { assertSkillResult } from "@/lib/skill/skillTypes";
 import type { Part } from "@/types/video";
 
@@ -49,10 +48,7 @@ async function resolveUserSkillForUnits(
     ? await resolveOverallSkill(user.id)
     : buildGuestSkillResult();
   assertSkillResult(skill);
-
-  if (skill.stage === "new_user") {
-    return getBootstrapSkillFromEnglishLevel(user?.englishLevel);
-  }
+  // Always Adaptive Teacher state (seeded once from onboarding if needed).
   return skill.skill;
 }
 

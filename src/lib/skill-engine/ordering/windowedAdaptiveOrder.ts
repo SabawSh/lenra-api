@@ -1,4 +1,6 @@
+import { isQualifiedComplete } from "@/lib/skill-engine/domain/progressAccessors";
 import type { AdaptivePartInput } from "@/lib/skill-engine/domain/types";
+import { contentDifficulty } from "@/lib/skill-engine/ordering/contentDifficulty";
 import {
   classifyDifficultyZone,
   createDistributionCounter,
@@ -6,12 +8,10 @@ import {
   recordZone,
   type DifficultyZone,
 } from "@/lib/skill-engine/ordering/difficultyZones";
-import { contentDifficulty } from "@/lib/skill-engine/ordering/contentDifficulty";
 import { computeEffectiveDifficulty } from "@/lib/skill-engine/ordering/effectiveDifficulty";
 import { getOrderingSignal } from "@/lib/skill-engine/ordering/orderingSignal";
 import type { AdaptiveSelectionConfig } from "@/lib/skill-engine/policy/adaptiveSelectionConfig";
 import { DEFAULT_ADAPTIVE_SELECTION_CONFIG } from "@/lib/skill-engine/policy/adaptiveSelectionConfig";
-import { isQualifiedComplete } from "@/lib/skill-engine/domain/progressAccessors";
 import { resolvePartState } from "@/lib/skill-engine/state/resolvePartState";
 
 function effectiveScore(
@@ -92,10 +92,7 @@ function orderSegment(
       userSkill,
       config,
     );
-    recordZone(
-      distributionCounter,
-      zone === "outside" ? "near" : zone,
-    );
+    recordZone(distributionCounter, zone === "outside" ? "near" : zone);
   }
 
   return ranked;

@@ -93,6 +93,11 @@ export async function PATCH(req: Request) {
       contentPrefsJson: toJsonStringArray(filteredPrefs),
       dailyGoalMinutes,
     });
+    // Seed overall_skill only when still null — do not reset Adaptive Teacher progress.
+    const { seedOverallSkillFromOnboardingIfAbsent } = await import(
+      "@/lib/db/queries/userAdaptiveSkill"
+    );
+    await seedOverallSkillFromOnboardingIfAbsent(user.id);
   } else {
     return NextResponse.json({ ok: false, error: "Invalid section" }, { status: 400 });
   }

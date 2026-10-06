@@ -103,6 +103,14 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "user_not_found" }, { status: 404 });
   }
 
+  // Seed Adaptive Teacher ability once from onboarding level; never overwrite later.
+  if (patch.englishLevel !== undefined) {
+    const { seedOverallSkillFromOnboardingIfAbsent } = await import(
+      "@/lib/db/queries/userAdaptiveSkill"
+    );
+    await seedOverallSkillFromOnboardingIfAbsent(session.userId);
+  }
+
   revalidateTag("user", { expire: 0 });
 
   return NextResponse.json({ ok: true, user });

@@ -40,6 +40,21 @@ export function playlistHasMergedLearningUnits(playlist: {
   return units.some((unit) => unit.parts.length > 1);
 }
 
+/**
+ * True when persisted atomic part sequence is not movie story order
+ * (`parts.order` ascending). Legacy windowed adaptive blueprints can freeze
+ * adjacent swaps (e.g. clips 4↔5); those must rematerialize.
+ */
+export function playlistViolatesStoryOrder(playlist: {
+  atomicParts?: ReadonlyArray<{ order: number }>;
+}): boolean {
+  const parts = playlist.atomicParts ?? [];
+  for (let i = 1; i < parts.length; i++) {
+    if (parts[i]!.order < parts[i - 1]!.order) return true;
+  }
+  return false;
+}
+
 type PartLike = {
   id: string;
   order: number;

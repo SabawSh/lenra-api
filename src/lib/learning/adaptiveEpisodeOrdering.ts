@@ -1,5 +1,16 @@
-import type { AdaptiveSelectionConfig } from "@/lib/learning/adaptiveClipOrdering";
-import { DEFAULT_ADAPTIVE_SELECTION_CONFIG } from "@/lib/learning/adaptiveClipOrdering";
+import { listProgressSliceForParts } from "@/lib/db/queries/userPartProgress";
+import {
+  DEFAULT_ADAPTIVE_SELECTION_CONFIG,
+  sortAdaptiveParts,
+  type AdaptivePartInput,
+  type AdaptiveSelectionConfig,
+  type PartProgress,
+} from "@/lib/learning/adaptiveClipOrdering";
+import {
+  buildGuestSkillResult,
+  resolveSkillForAdaptiveOrdering,
+} from "@/lib/skill/computeOverallSkill";
+import { assertSkillResult, type SkillResult } from "@/lib/skill/skillTypes";
 import type { EnglishLevel, PartDifficulty, UserId } from "@/types/schema";
 
 export type EpisodePartForAdaptiveOrder = {
@@ -11,6 +22,7 @@ export type EpisodePartForAdaptiveOrder = {
 
 export type AdaptiveOrderUser = {
   id: UserId;
+  /** Onboarding context only — never used as runtime ability. */
   englishLevel?: EnglishLevel | null;
 };
 
@@ -37,10 +49,7 @@ export function assertFullCurriculumPool(
   }
 }
 
-/**
- * Canonical movie story order (`parts.order`).
- * Difficulty adapts how the user practices a scene, not which scene they watch.
- */
+/** Emergency fallback when mapping integrity fails or sort throws. */
 function canonicalEpisodeOrder<T extends EpisodePartForAdaptiveOrder>(
   parts: T[],
 ): T[] {
@@ -62,17 +71,89 @@ function assertUniquePartIds<T extends EpisodePartForAdaptiveOrder>(
   return false;
 }
 
+function resolveOrderingSkill(
+  skill: SkillResult,
+): { overallSkill: number; bootstrap: boolean } {
+  // Ability always comes from Adaptive Teacher state — never re-read onboarding.
+  return {
+    overallSkill: skill.skill,
+    bootstrap: skill.source === "no_history" || skill.source === "cold_start",
+  };
+}
+
+async function runGlobalAdaptiveSort<T extends EpisodePartForAdaptiveOrder>(
+  episodeParts: T[],
+  user: AdaptiveOrderUser | null,
+  userSkill: number,
+  selectionConfig: AdaptiveSelectionConfig,
+  skill: SkillResult,
+  context?: AdaptiveEpisodeOrderContext,
+): Promise<T[]> {
+  const progressMap = new Map<string, PartProgress>();
+  if (user && episodeParts.length > 0) {
+    const slices = await listProgressSliceForParts(
+      user.id,
+      episodeParts.map((p) => p.id),
+    );
+    for (const slice of slices) {
+      progressMap.set(slice.partId, {
+        bestScore: slice.bestScore,
+        completedAt: slice.completedAt,
+        attempts: slice.attempts,
+        wrongMoves: slice.wrongMoves,
+      });
+    }
+  }
+
+  const adaptiveInputs: AdaptivePartInput[] = episodeParts.map((part) => ({
+    id: part.id,
+    order: part.order,
+    difficultyScore: part.difficultyScore,
+    progress: progressMap.get(part.id) ?? null,
+    dueToday: false,
+  }));
+
+  const orderedInputs = sortAdaptiveParts({
+    parts: adaptiveInputs,
+    userSkill,
+    config: selectionConfig,
+  });
+
+  const partById = new Map(episodeParts.map((p) => [p.id, p]));
+  const orderedParts = orderedInputs.map((input) => partById.get(input.id)!);
+
+  const outputIds = orderedParts.map((p) => p.id);
+  const outputUnique = new Set(outputIds).size === outputIds.length;
+
+  if (
+    !outputUnique ||
+    orderedParts.length !== episodeParts.length ||
+    orderedInputs.length !== episodeParts.length
+  ) {
+    console.error(
+      "[adaptive-order] global sort did not preserve unique 1:1 mapping; using canonical order",
+      {
+        inputLength: episodeParts.length,
+        outputLength: orderedParts.length,
+        sortedLength: orderedInputs.length,
+        skillSource: skill.source,
+        stage: skill.stage,
+      },
+    );
+    return canonicalEpisodeOrder(episodeParts);
+  }
+
+  console.assert(
+    new Set(orderedParts.map((p) => p.id)).size === orderedParts.length,
+    "Duplicate parts in global adaptive order",
+  );
+
+  return orderedParts;
+}
+
 /**
- * Learn playlist source = `parts.order` only.
- *
- * Difficulty adapts how the user practices a scene, not which scene they watch.
- * Difficulty-based reordering (windowedAdaptiveOrder / zone mix / rank keys) is
- * disabled on this path. Section slicing still happens afterward via
- * `sliceSectionFromGlobalOrder` (index window only).
- *
- * Smart Review uses a separate queue and must not affect canonical movie playback.
- *
- * `selectionConfig` is kept for call-site compatibility; it does not reorder clips.
+ * Applies adaptive ordering across the full episode curriculum pool.
+ * Section slicing must happen afterward via `sliceSectionFromGlobalOrder` (index window only).
  */
 export async function getAdaptiveEpisodeOrder<
   T extends EpisodePartForAdaptiveOrder,
@@ -99,5 +180,8 @@ export async function getAdaptiveEpisodeOrder<
     return canonicalEpisodeOrder(episodeParts);
   }
 
+  // Learn playlist is always movie story order (`parts.order`). Skill still
+  // drives practice adaptation (chunking / challenge) elsewhere — never clip order.
+  // `runGlobalAdaptiveSort` / windowed reorder are intentionally not used here.
   return canonicalEpisodeOrder(episodeParts);
 }

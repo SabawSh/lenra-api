@@ -39,6 +39,7 @@ export interface UserRow extends RowDataPacket {
   content_prefs: unknown;
   daily_goal_minutes: number;
   english_level: EnglishLevel | null;
+  overall_skill: number | null;
   native_language: string | null;
   onboarding_completed_at: Date | null;
   terms_accepted_at: Date | null;
@@ -70,6 +71,8 @@ export type User = {
   contentPrefs: JsonValue;
   dailyGoalMinutes: number;
   englishLevel: EnglishLevel | null;
+  /** Live Adaptive Teacher skill on 0–100; null until EMA history exists. */
+  overallSkill: number | null;
   nativeLanguage: string | null;
   onboardingCompletedAt: Date | null;
   termsAcceptedAt: Date | null;
@@ -158,6 +161,7 @@ async function allUserColumnsSql(): Promise<string> {
     content_prefs AS content_prefs,
     daily_goal_minutes AS daily_goal_minutes,
     english_level AS english_level,
+    overall_skill AS overall_skill,
     native_language AS native_language,
     onboarding_completed_at AS onboarding_completed_at,
     terms_accepted_at AS terms_accepted_at,
@@ -218,6 +222,10 @@ export function mapUserRowToUser(row: UserRow): User {
     contentPrefs: parseJsonColumn(row.content_prefs),
     dailyGoalMinutes: row.daily_goal_minutes,
     englishLevel: row.english_level,
+    overallSkill:
+      row.overall_skill != null && Number.isFinite(Number(row.overall_skill))
+        ? Number(row.overall_skill)
+        : null,
     nativeLanguage: row.native_language,
     onboardingCompletedAt: row.onboarding_completed_at,
     termsAcceptedAt: row.terms_accepted_at,
@@ -885,12 +893,45 @@ export async function adminUpdateUserBasics(params: {
   return getUserById(params.userId);
 }
 
+/**
+ * Tables that historically drifted to ON DELETE NO ACTION after the UUID
+ * migration. Cascade alone can fail with ER_ROW_IS_REFERENCED (1451); clear
+ * them first so admin delete works even before the FK repair migration runs.
+ */
+const USER_DELETE_PRECLEAR_TABLES = [
+  "user_part_progress",
+  "user_achievements",
+  "user_token_marks",
+  "user_daily_learning_time",
+  "user_daily_xp",
+  "saved_vocabulary_cards",
+  "user_video_last_seen",
+] as const;
+
 export async function deleteUserById(userId: UserId): Promise<boolean> {
-  const [result] = await pool.execute<ResultSetHeader>(
-    `DELETE FROM users WHERE id = ?`,
-    [userId],
-  );
-  return result.affectedRows > 0;
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    for (const table of USER_DELETE_PRECLEAR_TABLES) {
+      await conn.execute(`DELETE FROM \`${table}\` WHERE user_id = ?`, [
+        userId,
+      ]);
+    }
+
+    const [result] = await conn.execute<ResultSetHeader>(
+      `DELETE FROM users WHERE id = ?`,
+      [userId],
+    );
+
+    await conn.commit();
+    return result.affectedRows > 0;
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 }
 
 export async function setUserSiteAdminFlag(

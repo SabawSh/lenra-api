@@ -331,26 +331,46 @@ export async function POST(req: Request) {
       ? Number(streakRow.learningStreakCurrent)
       : 0;
 
-    // Non-critical: XP, achievements, section skill, cache — still run, not awaited by client.
+    // Section skill EMA must finish before the response so the client can show
+    // promote/downgrade feedback. Deduped per section_key; KEEP is omitted.
+    let adaptiveTeacher: {
+      decision: "UPGRADE" | "DOWNGRADE";
+      previousLevel: string;
+      newLevel: string;
+    } | null = null;
+    try {
+      const sectionCtx = await fetchPartAdaptiveSectionContext(part, user.id);
+      if (sectionCtx) {
+        const isSectionCompletedNow = await isSectionFullyComplete({
+          userId: user.id,
+          ...sectionScopeParams(sectionCtx),
+        });
+        if (isSectionCompletedNow) {
+          const teacherDecision = await applySectionSkillUpdateOnTransition(
+            user.id,
+            sectionCtx,
+          );
+          if (
+            teacherDecision &&
+            (teacherDecision.decision === "UPGRADE" ||
+              teacherDecision.decision === "DOWNGRADE")
+          ) {
+            adaptiveTeacher = {
+              decision: teacherDecision.decision,
+              previousLevel: teacherDecision.previousLevel,
+              newLevel: teacherDecision.newLevel,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[performance] section skill update failed", err);
+    }
+
+    // Non-critical: XP, achievements, cache — still run, not awaited by client.
     runAfterResponse(async () => {
       try {
         const streakBefore = await getStreakForUser(user.id);
-        const sectionCtx = await fetchPartAdaptiveSectionContext(part, user.id);
-
-        if (sectionCtx) {
-          const isSectionCompletedNow = await isSectionFullyComplete({
-            userId: user.id,
-            ...sectionScopeParams(sectionCtx),
-          });
-          if (isSectionCompletedNow) {
-            await applySectionSkillUpdateOnTransition(
-              user.id,
-              sectionCtx,
-            ).catch((err) => {
-              console.error("[performance] section skill update failed", err);
-            });
-          }
-        }
 
         const streakAfterRow = await findUserStreakSliceById(user.id);
         const streakAfter = streakAfterRow
@@ -411,6 +431,7 @@ export async function POST(req: Request) {
       progress,
       achievementsUnlocked: [],
       achievementXpAwarded: 0,
+      adaptiveTeacher,
       xp: {
         earned: 0,
         streakCurrent,
