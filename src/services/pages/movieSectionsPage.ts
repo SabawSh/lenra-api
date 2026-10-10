@@ -3,7 +3,7 @@ import { userCanAccessLearning } from "@/lib/payments/access";
 import { getLearningResumePosition } from "@/lib/db/learningResume";
 import * as videoQueries from "@/lib/db/queries/videos";
 import {
-  countPartsForVideo,
+  countPartsForVideoFresh,
   getVideoSectionUnlockRows,
 } from "@/lib/db/sectionProgress";
 import { enrichBatchesWithPartProgress } from "@/lib/learning/enrichBatchesWithPartProgress";
@@ -41,15 +41,15 @@ export async function buildMovieSectionsPage(
 
   const [movie, totalParts, difficultyMixMap] = await Promise.all([
     videoQueries.fetchVideoScalarsById(id),
-    countPartsForVideo(id),
+    countPartsForVideoFresh(id),
     videoQueries.countPartDifficultyForVideoIds([id]),
   ]);
 
-  if (
-    !movie ||
-    (movie.type !== "movie" && movie.type !== "documentary") ||
-    totalParts < 1
-  ) {
+  if (!movie || (movie.type !== "movie" && movie.type !== "documentary")) {
+    return { ok: false, reason: "not_found" };
+  }
+
+  if (totalParts < 1) {
     return { ok: false, reason: "not_found" };
   }
 

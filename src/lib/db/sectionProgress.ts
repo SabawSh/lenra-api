@@ -35,8 +35,17 @@ export const countPartsForVideo = unstable_cache(
   async (videoId: string): Promise<number> =>
     vq.countPartsForVideoId(videoId),
   ["count-parts-for-video"],
-  { revalidate: 864000, tags: ["videos"] },
+  { revalidate: 60, tags: ["videos"] },
 );
+
+/** Bypass a stale empty cache (clips imported after a 0 was stored). */
+export async function countPartsForVideoFresh(
+  videoId: string,
+): Promise<number> {
+  const cached = await countPartsForVideo(videoId);
+  if (cached > 0) return cached;
+  return vq.countPartsForVideoId(videoId);
+}
 
 type SectionScope = {
   userId: UserId | null;

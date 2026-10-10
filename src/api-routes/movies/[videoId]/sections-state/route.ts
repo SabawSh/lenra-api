@@ -2,7 +2,7 @@ import { getCurrentUser } from "@/lib/auth/getCurrentUser";
 import { getLearningResumePosition } from "@/lib/db/learningResume";
 import { getStandaloneVideoMeta } from "@/lib/db/parts";
 import {
-  countPartsForVideo,
+  countPartsForVideoFresh,
   getVideoSectionUnlockRows,
 } from "@/lib/db/sectionProgress";
 import { isContentIdParam } from "@/lib/ids/contentId";
@@ -32,7 +32,7 @@ export async function GET(
 
   const [movieMeta, totalParts, user] = await Promise.all([
     getStandaloneVideoMeta(videoId),
-    countPartsForVideo(videoId),
+    countPartsForVideoFresh(videoId),
     getCurrentUser(),
   ]);
 
