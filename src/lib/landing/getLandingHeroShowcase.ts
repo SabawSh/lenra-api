@@ -4,6 +4,7 @@ import { getVideoLibrary } from "@/lib/db/videoLibrary";
 import { countPartsForVideoId } from "@/lib/db/queries/videos";
 import { isLandingHeroShowcaseEligible } from "@/lib/landing/heroShowcase";
 import type { VideoType } from "@/types/schema";
+import type { Video } from "@/types/video";
 
 export type LandingHeroShowcaseItem = {
   id: string;
@@ -16,6 +17,7 @@ export type LandingHeroShowcaseItem = {
   seasonCount: number;
   imdbRating: number | null;
   levels: string[];
+  difficultyMix: Video["difficultyMix"] | null;
 };
 
 const SHOWCASE_LIMIT = 9;
@@ -46,6 +48,7 @@ async function loadLandingHeroShowcase(): Promise<LandingHeroShowcaseItem[]> {
         seasonCount: video.seasons?.length ?? 0,
         imdbRating: video.imdbRating,
         levels: video.levels,
+        difficultyMix: video.difficultyMix ?? null,
       });
     }
 

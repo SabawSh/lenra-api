@@ -3,9 +3,9 @@ export const BITPAY_PLAN_KEYS = ["monthly", "every6Months", "yearly"] as const;
 export type BitpayPlanKey = (typeof BITPAY_PLAN_KEYS)[number];
 
 const DEFAULT_PLAN_AMOUNTS_RIAL: Record<BitpayPlanKey, number> = {
-  monthly: 4_500_000,
-  every6Months: 25_500_000,
-  yearly: 48_000_000,
+  monthly: 6_990_000,
+  every6Months: 34_900_000,
+  yearly: 59_900_000,
 };
 
 function envInt(name: string): number | null {
@@ -29,10 +29,11 @@ export function getPlanAmountRial(plan: BitpayPlanKey): number {
   return envInt("BITPAY_PLAN_YEARLY_RIAL") ?? DEFAULT_PLAN_AMOUNTS_RIAL.yearly;
 }
 
+/** Includes bonus months: 6 + 1 free, 12 + 2 free (30 days per bonus month). */
 const PLAN_DURATION_DAYS: Record<BitpayPlanKey, number> = {
   monthly: 30,
-  every6Months: 180,
-  yearly: 365,
+  every6Months: 210,
+  yearly: 425,
 };
 
 export function getPlanDurationMs(plan: BitpayPlanKey): number {

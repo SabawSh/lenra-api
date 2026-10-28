@@ -16,6 +16,8 @@ function parseStringArray(raw: unknown): string[] {
  * POST /api/admin/update-video-meta
  * Body: {
  *   id: string;
+ *   name?: string;
+ *   description?: string | null;
  *   levels?: string[];
  *   level?: string | null; // legacy single value
  *   genres?: string[];
@@ -23,6 +25,7 @@ function parseStringArray(raw: unknown): string[] {
  *   imdbRating?: number | null;
  *   isLiked?: boolean;
  *   releaseAt?: string; // ISO date string
+ *   defaultAudioLanguage?: string;
  * }
  */
 export async function POST(req: Request) {
@@ -47,13 +50,30 @@ export async function POST(req: Request) {
   }
 
   const data: {
+    name?: string;
+    description?: string | null;
     levels?: string[];
     genres?: string[];
     isNew?: boolean;
     imdbRating?: number | null;
     isLiked?: boolean;
     releaseAt?: Date;
+    defaultAudioLanguage?: string;
   } = {};
+
+  if (typeof record?.name === "string" && record.name.trim()) {
+    data.name = record.name.trim();
+  }
+
+  if ("description" in (record ?? {})) {
+    const raw = record?.description;
+    data.description =
+      raw === null || raw === undefined
+        ? null
+        : typeof raw === "string"
+          ? raw
+          : String(raw);
+  }
 
   if ("levels" in (record ?? {})) {
     data.levels = parseStringArray(record?.levels);
@@ -94,6 +114,13 @@ export async function POST(req: Request) {
   if (typeof record?.releaseAt === "string" && record.releaseAt.trim()) {
     const d = new Date(record.releaseAt);
     if (!isNaN(d.getTime())) data.releaseAt = d;
+  }
+
+  if (
+    typeof record?.defaultAudioLanguage === "string" &&
+    record.defaultAudioLanguage.trim()
+  ) {
+    data.defaultAudioLanguage = record.defaultAudioLanguage.trim().slice(0, 16);
   }
 
   if (Object.keys(data).length === 0) {

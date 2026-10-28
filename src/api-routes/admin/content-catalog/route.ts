@@ -31,6 +31,7 @@ export async function GET(req: Request) {
               id: episode.id,
               episodeNum: episode.episodeNum,
               title: episode.title,
+              description: episode.description ?? null,
               coverUrl: episode.coverUrl ?? null,
               releaseAt:
                 episode.releaseAt instanceof Date
@@ -50,6 +51,15 @@ export async function GET(req: Request) {
         tag: video.tag,
         coverUrl: video.coverUrl ?? null,
         description: video.description ?? null,
+        genres: Array.isArray(video.genres) ? video.genres : [],
+        levels: Array.isArray(video.levels) ? video.levels : [],
+        defaultAudioLanguage: video.defaultAudioLanguage ?? "en",
+        releaseAt:
+          video.releaseAt instanceof Date
+            ? video.releaseAt.toISOString()
+            : video.releaseAt
+              ? String(video.releaseAt)
+              : null,
         seasons,
       };
     }),

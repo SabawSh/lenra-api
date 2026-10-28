@@ -55,6 +55,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/admin/update-cover/route.js"),
   },
   {
+    urlPattern: "/api/admin/update-episode-meta",
+    paramNames: [],
+    load: () => import("../../api-routes/admin/update-episode-meta/route.js"),
+  },
+  {
     urlPattern: "/api/admin/update-video-meta",
     paramNames: [],
     load: () => import("../../api-routes/admin/update-video-meta/route.js"),

@@ -13,7 +13,11 @@ import {
   LANDING_DEMO_SEASON_NUM,
   LANDING_DEMO_VIDEO_TAG,
 } from "@/lib/landing/demoConfig";
-import { buildFallbackDemoPart, withBundledDemoVideo } from "@/lib/landing/fallbackDemoPart";
+import {
+  buildFallbackDemoPart,
+  withBundledDemoVideo,
+  withPartOrBundledDemoVideo,
+} from "@/lib/landing/fallbackDemoPart";
 import type { Part } from "@/types/video";
 import type { RowDataPacket } from "mysql2";
 
@@ -75,7 +79,7 @@ async function loadCuratedPartFromDb(): Promise<LandingDemoContent | null> {
   const meta = metaRows[0];
 
   return {
-    part: withBundledDemoVideo(part),
+    part: withPartOrBundledDemoVideo(part),
     videoTitle: meta?.video_name ?? "Friends",
     episodeLabel: `S${String(LANDING_DEMO_SEASON_NUM).padStart(2, "0")}E${String(meta?.episode_num ?? LANDING_DEMO_EPISODE_NUM).padStart(2, "0")}`,
     source: "db",
@@ -107,7 +111,7 @@ async function loadPartById(partId: string): Promise<LandingDemoContent | null> 
   const scope = scopeRows[0];
 
   return {
-    part: withBundledDemoVideo({ ...part, translations }),
+    part: withPartOrBundledDemoVideo({ ...part, translations }),
     videoTitle: scope?.video_name ?? "Lenra",
     episodeLabel: scope
       ? `S${String(scope.season_num).padStart(2, "0")}E${String(scope.episode_num).padStart(2, "0")}`

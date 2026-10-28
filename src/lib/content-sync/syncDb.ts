@@ -24,6 +24,7 @@ export function getContentSyncPool(): Pool {
     waitForConnections: true,
     connectionLimit: 5,
     queueLimit: 0,
+    timezone: "Z",
   });
   syncPoolClosed = false;
   return syncPool;

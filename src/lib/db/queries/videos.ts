@@ -414,6 +414,7 @@ export async function deleteVideoByPk(id: string): Promise<boolean> {
 }
 
 export type VideoMetaPatch = {
+  name?: string;
   levels?: string[];
   genres?: string[];
   isNew?: boolean;
@@ -442,6 +443,10 @@ export async function patchVideoScalars(
 ): Promise<boolean> {
   const sets: string[] = [];
   const vals: SqlScalar[] = [];
+  if (patch.name !== undefined) {
+    sets.push("name = ?");
+    vals.push(patch.name.slice(0, 191));
+  }
   if (patch.levels !== undefined) {
     sets.push("levels = CAST(? AS JSON)");
     vals.push(JSON.stringify(patch.levels));

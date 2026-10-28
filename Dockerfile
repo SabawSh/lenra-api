@@ -12,6 +12,7 @@ COPY src ./src
 COPY scripts ./scripts
 
 ENV NODE_ENV=production
+ENV TZ=Asia/Tehran
 
 EXPOSE 4000
 

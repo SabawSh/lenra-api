@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db/connection";
+import { appTimeZoneSqlOffset } from "@/lib/time/appTimeZone";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import type { VideoType } from "@/types/video";
 
@@ -272,7 +273,7 @@ export async function listUserRemindersForDayJoined(params: {
 }
 
 export type ReminderDayCount = {
-  /** YYYY-MM-DD in the DB/session timezone used for due_at */
+  /** YYYY-MM-DD in the app time zone */
   date: string;
   count: number;
 };
@@ -285,6 +286,7 @@ export async function listUserReminderDayCounts(params: {
   rootVideoId?: string | null;
 }): Promise<ReminderDayCount[]> {
   const args: SqlScalar[] = [
+    appTimeZoneSqlOffset(),
     params.userId,
     params.rangeStart,
     params.rangeEnd,
@@ -299,7 +301,7 @@ export async function listUserReminderDayCounts(params: {
   type R = RowDataPacket & { d: string; c: bigint };
   const [rows] = await pool.execute<R[]>(
     `
-    SELECT DATE_FORMAT(ur.due_at, '%Y-%m-%d') AS d, COUNT(*) AS c
+    SELECT DATE_FORMAT(CONVERT_TZ(ur.due_at, '+00:00', ?), '%Y-%m-%d') AS d, COUNT(*) AS c
     FROM user_reminders ur
     INNER JOIN part_catalog pc ON pc.part_id COLLATE utf8mb4_unicode_ci = ur.part_id
     WHERE ur.user_id = ?

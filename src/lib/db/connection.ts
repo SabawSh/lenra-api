@@ -23,6 +23,8 @@ export const pool =
     queueLimit: 0,
     enableKeepAlive: true,
     keepAliveInitialDelay: 0,
+    // DATETIME columns hold UTC; the process clock runs in the app time zone.
+    timezone: "Z",
   });
 
 if (process.env.NODE_ENV !== "production") {

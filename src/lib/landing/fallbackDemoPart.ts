@@ -98,6 +98,16 @@ export function buildFallbackDemoPart(): Part {
   };
 }
 
+/**
+ * DB parts keep their own clip so the video always matches the caption; the
+ * bundled clip is only for parts that have no media (its audio is the
+ * fallback sentence, not whatever line the DB part holds).
+ */
+export function withPartOrBundledDemoVideo(part: Part): Part {
+  if (part.videoUrl || part.hlsManifestUrl) return part;
+  return withBundledDemoVideo(part);
+}
+
 /** Force the bundled public clip so the landing demo always plays offline. */
 export function withBundledDemoVideo(part: Part): Part {
   return {
