@@ -1,5 +1,8 @@
 import { isSiteMediaAdmin } from "@/lib/auth/siteAdmin";
-import { getActiveSubscriptionExpiresAt } from "@/lib/db/queries/subscriptions";
+import {
+  getActiveSubscription,
+  getActiveSubscriptionExpiresAt,
+} from "@/lib/db/queries/subscriptions";
 import type { User } from "@/lib/db/queries/users";
 import { cache } from "react";
 
@@ -36,6 +39,35 @@ export function isWithinFreeTrial(
 }
 
 const getCachedActiveSubscriptionExpiresAt = cache(getActiveSubscriptionExpiresAt);
+
+export type MembershipTier = "premium" | "trial" | "free";
+
+export type Membership = {
+  tier: MembershipTier;
+  planKey: string | null;
+  expiresAt: string | null;
+  trialEndsAt: string;
+  memberSince: string;
+};
+
+const getCachedActiveSubscription = cache(getActiveSubscription);
+
+export async function getUserMembership(user: User): Promise<Membership> {
+  const subscription = await getCachedActiveSubscription(user.id);
+  const trialEndsAt = getTrialEndsAt(user.createdAt);
+  const tier: MembershipTier = subscription
+    ? "premium"
+    : isWithinFreeTrial(user.createdAt)
+      ? "trial"
+      : "free";
+  return {
+    tier,
+    planKey: subscription?.planKey ?? null,
+    expiresAt: subscription?.expiresAt.toISOString() ?? null,
+    trialEndsAt: trialEndsAt.toISOString(),
+    memberSince: toDate(user.createdAt).toISOString(),
+  };
+}
 
 export async function userCanAccessLearning(user: User): Promise<boolean> {
   if (isSiteMediaAdmin(user)) return true;

@@ -1,4 +1,8 @@
 import { localDateKey } from "@/lib/db/localDateKey";
+import {
+  isStreakExpiredByCalendar,
+  nextStreakAfterActivity,
+} from "@/lib/db/learningStreakCalendar";
 import { assertUserId } from "@/lib/db/userId";
 import {
   findUserStreakSliceById,
@@ -8,8 +12,17 @@ import type { UserId } from "@/types/schema";
 import { cache } from "react";
 
 export { localDateKey } from "@/lib/db/localDateKey";
+export {
+  calendarDayOffset,
+  isStreakExpiredByCalendar,
+  nextStreakAfterActivity,
+  parseDayKey,
+} from "@/lib/db/learningStreakCalendar";
 
-/** Streak breaks if no qualifying study within this window. */
+/**
+ * @deprecated Kept for import compatibility. Streaks use calendar days, not a
+ * rolling 24h clock — see {@link nextStreakAfterActivity}.
+ */
 export const STREAK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function localTodayBounds() {
@@ -19,37 +32,12 @@ function localTodayBounds() {
   return { start, end };
 }
 
-/** End of the local calendar day for a YYYY-MM-DD key (legacy rows without `last_learning_streak_at`). */
-function endOfDayKey(key: string): Date {
-  const [yy, mm, dd] = key.split("-").map(Number);
-  return new Date(yy, mm - 1, dd, 23, 59, 59, 999);
-}
-
 type StreakRow = {
   lastLearningStreakDayKey: string | null;
   lastLearningStreakAt: Date | null;
   learningStreakCurrent: number;
   learningStreakBest: number;
 };
-
-function effectiveLastStreakAt(row: StreakRow): Date | null {
-  if (row.lastLearningStreakAt) return row.lastLearningStreakAt;
-  if (row.lastLearningStreakDayKey) {
-    return endOfDayKey(row.lastLearningStreakDayKey);
-  }
-  return null;
-}
-
-function msSinceLastStreakActivity(row: StreakRow, now = new Date()): number {
-  const lastAt = effectiveLastStreakAt(row);
-  if (!lastAt) return Number.POSITIVE_INFINITY;
-  return now.getTime() - lastAt.getTime();
-}
-
-function isStreakExpired(row: StreakRow, now = new Date()): boolean {
-  if (row.learningStreakCurrent <= 0) return false;
-  return msSinceLastStreakActivity(row, now) >= STREAK_WINDOW_MS;
-}
 
 /** Any part practice logged today (local calendar), same window as streak day keys. */
 export async function hasLearningActivityToday(
@@ -86,7 +74,7 @@ async function writeStreakRow(
 }
 
 /**
- * Zero out the streak when the user has not studied within the last 24 hours.
+ * Zero the streak when the user missed a full local calendar day.
  * Called on read paths so the UI reflects a broken chain without waiting for the next session.
  */
 export async function expireLearningStreakIfNeeded(
@@ -96,7 +84,7 @@ export async function expireLearningStreakIfNeeded(
     assertUserId(userId);
 
     const row = await fetchStreakRow(userId);
-    if (!row || !isStreakExpired(row)) return;
+    if (!row || !isStreakExpiredByCalendar(row, localDateKey())) return;
 
     await writeStreakRow(userId, {
       lastLearningStreakDayKey: row.lastLearningStreakDayKey,
@@ -111,8 +99,8 @@ export async function expireLearningStreakIfNeeded(
 
 /**
  * Call when the user does real learning (watch time and/or part practice).
- * At most one streak step per local calendar day while the chain is alive.
- * Missing 24 hours of study resets the chain; the next session starts at 1.
+ * At most one streak step per local calendar day.
+ * Missing a calendar day resets the chain; the next session starts at 1.
  */
 export async function recordLearningActivityDay(userId: UserId): Promise<void> {
   try {
@@ -126,10 +114,7 @@ export async function recordLearningActivityDay(userId: UserId): Promise<void> {
     const user = await fetchStreakRow(userId);
     if (!user) return;
 
-    const withinWindow = msSinceLastStreakActivity(user, now) < STREAK_WINDOW_MS;
-
     if (
-      withinWindow &&
       user.lastLearningStreakDayKey === todayKey &&
       user.learningStreakCurrent > 0
     ) {
@@ -142,15 +127,11 @@ export async function recordLearningActivityDay(userId: UserId): Promise<void> {
       return;
     }
 
-    let next = 1;
-    if (!user.lastLearningStreakDayKey || user.learningStreakCurrent <= 0) {
-      next = 1;
-    } else if (withinWindow && user.lastLearningStreakDayKey !== todayKey) {
-      next = user.learningStreakCurrent + 1;
-    } else {
-      next = 1;
-    }
-
+    const next = nextStreakAfterActivity({
+      lastDayKey: user.lastLearningStreakDayKey,
+      current: user.learningStreakCurrent,
+      todayKey,
+    });
     const best = Math.max(user.learningStreakBest, next);
 
     await writeStreakRow(userId, {

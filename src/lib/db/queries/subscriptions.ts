@@ -51,6 +51,34 @@ export async function getActiveSubscriptionExpiresAt(
   return rows[0]?.expires_at ? toDate(rows[0].expires_at) : null;
 }
 
+interface ActiveSubscriptionRow extends RowDataPacket {
+  plan_key: string;
+  expires_at: Date | string;
+}
+
+export type ActiveSubscription = {
+  planKey: string;
+  expiresAt: Date;
+};
+
+export async function getActiveSubscription(
+  userId: UserId,
+): Promise<ActiveSubscription | null> {
+  const [rows] = await pool.query<ActiveSubscriptionRow[]>(
+    `SELECT plan_key, expires_at
+     FROM user_subscriptions
+     WHERE user_id = ?
+       AND status = 'active'
+       AND expires_at > UTC_TIMESTAMP(3)
+     ORDER BY expires_at DESC
+     LIMIT 1`,
+    [userId],
+  );
+  const row = rows[0];
+  if (!row?.expires_at) return null;
+  return { planKey: row.plan_key, expiresAt: toDate(row.expires_at) };
+}
+
 export async function activateUserSubscription(params: {
   userId: UserId;
   planKey: BitpayPlanKey;
