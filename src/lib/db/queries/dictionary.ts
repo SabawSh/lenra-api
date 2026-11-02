@@ -89,13 +89,23 @@ const DICTIONARY_ENTRY_COLUMNS_MINIMAL = `
   cefr_level
 `;
 
-const DICTIONARY_SENSE_COLUMNS = `
+const DICTIONARY_SENSE_COLUMNS_WITH_IPA = `
   id,
   dictionary_entry_id,
   sense_order,
   part_of_speech,
   cefr_level,
   ipa,
+  definition_en,
+  definition_fa
+`;
+
+const DICTIONARY_SENSE_COLUMNS_WITHOUT_IPA = `
+  id,
+  dictionary_entry_id,
+  sense_order,
+  part_of_speech,
+  cefr_level,
   definition_en,
   definition_fa
 `;
@@ -166,6 +176,12 @@ function exampleRowToDictionaryExample(
   };
 }
 
+function isMissingTableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const row = error as { code?: string };
+  return row.code === "ER_NO_SUCH_TABLE";
+}
+
 async function fetchExamplesBySenseIds(
   senseIds: readonly string[],
 ): Promise<Map<string, DictionaryExample[]>> {
@@ -174,19 +190,29 @@ async function fetchExamplesBySenseIds(
   }
 
   const placeholders = senseIds.map(() => "?").join(", ");
-  const [rows] = await pool.execute<DictionaryExampleRow[]>(
-    `
-    SELECT
-      dictionary_sense_id,
-      text_en,
-      text_fa,
-      example_order
-    FROM dictionary_examples
-    WHERE dictionary_sense_id IN (${placeholders})
-    ORDER BY example_order ASC, dictionary_sense_id ASC
-    `,
-    [...senseIds],
-  );
+  let rows: DictionaryExampleRow[];
+  try {
+    const [result] = await pool.execute<DictionaryExampleRow[]>(
+      `
+      SELECT
+        dictionary_sense_id,
+        text_en,
+        text_fa,
+        example_order
+      FROM dictionary_examples
+      WHERE dictionary_sense_id IN (${placeholders})
+      ORDER BY example_order ASC, dictionary_sense_id ASC
+      `,
+      [...senseIds],
+    );
+    rows = result;
+  } catch (error) {
+    // Staging / older DBs may lack dictionary_examples — senses still usable.
+    if (isMissingTableError(error) || isBadFieldError(error)) {
+      return new Map();
+    }
+    throw error;
+  }
 
   const examplesBySenseId = new Map<string, DictionaryExample[]>();
 
@@ -232,19 +258,44 @@ function senseRowToDictionarySense(
   return sense;
 }
 
-async function fetchSensesForEntry(
+async function fetchSenseRowsForEntry(
   entryId: string,
-): Promise<DictionarySense[]> {
+): Promise<DictionarySenseRow[]> {
+  try {
+    const [rows] = await pool.execute<DictionarySenseRow[]>(
+      `
+      SELECT
+        ${DICTIONARY_SENSE_COLUMNS_WITH_IPA}
+      FROM dictionary_senses
+      WHERE dictionary_entry_id = ?
+      ORDER BY sense_order ASC, cefr_level ASC, id ASC
+      `,
+      [entryId],
+    );
+    return rows;
+  } catch (error) {
+    if (!isBadFieldError(error)) {
+      throw error;
+    }
+  }
+
   const [rows] = await pool.execute<DictionarySenseRow[]>(
     `
     SELECT
-      ${DICTIONARY_SENSE_COLUMNS}
+      ${DICTIONARY_SENSE_COLUMNS_WITHOUT_IPA}
     FROM dictionary_senses
     WHERE dictionary_entry_id = ?
     ORDER BY sense_order ASC, cefr_level ASC, id ASC
     `,
     [entryId],
   );
+  return rows;
+}
+
+async function fetchSensesForEntry(
+  entryId: string,
+): Promise<DictionarySense[]> {
+  const rows = await fetchSenseRowsForEntry(entryId);
 
   const examplesBySenseId = await fetchExamplesBySenseIds(
     rows.map((row) => row.id),

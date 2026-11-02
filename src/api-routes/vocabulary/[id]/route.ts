@@ -1,3 +1,7 @@
+import {
+  analyticsContextFromRequest,
+  emitServerAnalyticsEvent,
+} from "@/lib/analytics/serverEmit";
 import { requireLearningUser } from "@/lib/auth/requireLearningAccess";
 import {
   deleteSavedVocabularyCardForUser,

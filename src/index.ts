@@ -9,6 +9,9 @@ import { corsMiddleware } from "./middleware/cors.js";
 import { docsRoutes } from "./routes/docs.js";
 import { healthRoutes } from "./routes/health.js";
 import { lenraApiDispatch } from "./routes/lenra/dispatch.js";
+import { initApiSentry, Sentry } from "@/lib/sentry.js";
+
+initApiSentry();
 
 const app = new Hono<AppEnv>();
 
@@ -22,6 +25,11 @@ app.notFound((c) => c.json({ error: "not_found" }, 404));
 
 app.onError((err, c) => {
   console.error(err);
+  try {
+    Sentry.captureException(err);
+  } catch {
+    /* sentry optional */
+  }
   return c.json({ error: "internal_error" }, 500);
 });
 

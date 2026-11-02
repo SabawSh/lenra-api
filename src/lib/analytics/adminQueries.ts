@@ -1,5 +1,6 @@
 import { getDbPool } from "@/lib/db/connection";
 import type { RowDataPacket } from "mysql2";
+import { sqlNotTestEvent } from "@/lib/analytics/testDataFilter";
 
 export type DateRange = { from: Date; to: Date };
 
@@ -80,7 +81,8 @@ export async function getAnalyticsOverview(range: DateRange) {
       (SELECT COUNT(DISTINCT user_id) FROM analytics_sessions
         WHERE started_at BETWEEN ? AND ? AND user_id IS NOT NULL) AS active_users,
       (SELECT COUNT(*) FROM analytics_events
-        WHERE created_at BETWEEN ? AND ? AND event_name = 'signup_completed') AS signups_tracked,
+        WHERE created_at BETWEEN ? AND ? AND event_name = 'signup_completed'
+          AND ${sqlNotTestEvent()}) AS signups_tracked,
       (SELECT COUNT(DISTINCT visitor_id) FROM analytics_sessions
         WHERE started_at BETWEEN ? AND ?) AS session_visitors
     `,
@@ -353,7 +355,7 @@ export async function getAnalyticsUserProfile(visitorId: string) {
       (SELECT COUNT(*) FROM analytics_sessions WHERE visitor_id = ?) AS sessions,
       (SELECT COUNT(*) FROM analytics_events WHERE visitor_id = ?) AS events,
       (SELECT COUNT(*) FROM analytics_events WHERE visitor_id = ? AND event_name = 'page_view') AS page_views,
-      (SELECT COALESCE(SUM(duration_ms), 0) FROM analytics_sessions WHERE visitor_id = ?) AS learning_time_proxy_ms
+      (SELECT COALESCE(SUM(duration_ms), 0) FROM analytics_sessions WHERE visitor_id = ?) AS session_duration_sum_ms
     `,
     [visitorId, visitorId, visitorId, visitorId],
   );
@@ -386,7 +388,8 @@ export async function getAnalyticsUserProfile(visitorId: string) {
       sessions: asNumber(counts?.sessions),
       events: asNumber(counts?.events),
       pageViews: asNumber(counts?.page_views),
-      totalSessionDurationMs: asNumber(counts?.learning_time_proxy_ms),
+      /** Browser session duration sum — not learning time. */
+      totalSessionDurationMs: asNumber(counts?.session_duration_sum_ms),
     },
     firstTouch: firstTouch[0] ?? null,
     lastTouch: lastTouch[0] ?? null,

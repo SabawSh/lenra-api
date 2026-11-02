@@ -67,21 +67,28 @@ export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
     1 - (mistakePenalty + hintPenalty) / (SCORE_WEIGHTS.accuracy * 0.6),
   );
 
-  let baseScore =
-    accuracy * SCORE_WEIGHTS.accuracy +
-    consistency * SCORE_WEIGHTS.consistency +
-    modeBonus * SCORE_WEIGHTS.inputExpectation;
+  // Zero accuracy must never produce a non-zero clip score. Consistency and
+  // mode expectation are modifiers on real correctness — not a free floor that
+  // can mark a failed attempt as successful completion (score > 0).
+  let score = 0;
+  if (accuracy > 0) {
+    let baseScore =
+      accuracy * SCORE_WEIGHTS.accuracy +
+      consistency * SCORE_WEIGHTS.consistency +
+      modeBonus * SCORE_WEIGHTS.inputExpectation;
 
-  let score = baseScore;
+    score = baseScore;
 
-  // Keep coverage impact, but make it gentle to avoid hidden punishment feeling.
-  if (coverage < MIN_COVERAGE_FOR_FULL_SCORE) {
-    const coverageRatio = coverage / MIN_COVERAGE_FOR_FULL_SCORE;
-    const coverageFactor = 0.85 + Math.max(0, Math.min(1, coverageRatio)) * 0.15;
-    score *= coverageFactor;
+    // Keep coverage impact, but make it gentle to avoid hidden punishment feeling.
+    if (coverage < MIN_COVERAGE_FOR_FULL_SCORE) {
+      const coverageRatio = coverage / MIN_COVERAGE_FOR_FULL_SCORE;
+      const coverageFactor =
+        0.85 + Math.max(0, Math.min(1, coverageRatio)) * 0.15;
+      score *= coverageFactor;
+    }
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
   }
-
-  score = Math.max(0, Math.min(100, Math.round(score)));
 
   const voicePerfectByDisplayedMetrics =
     raw.inputMode === "voice" &&

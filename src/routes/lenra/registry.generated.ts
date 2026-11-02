@@ -330,6 +330,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/pages/admin/analytics/overview/route.js"),
   },
   {
+    urlPattern: "/api/pages/admin/analytics/product",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/admin/analytics/product/route.js"),
+  },
+  {
     urlPattern: "/api/pages/admin/analytics/search-console",
     paramNames: [],
     load: () => import("../../api-routes/pages/admin/analytics/search-console/route.js"),

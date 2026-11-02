@@ -1,3 +1,4 @@
+import { emitServerAnalyticsEvent } from "@/lib/analytics/serverEmit";
 import { verifyBitpayPayment } from "@/lib/payments/bitpay";
 import { verifyCheckoutState } from "@/lib/payments/checkoutState";
 import { activateUserSubscription } from "@/lib/db/queries/subscriptions";
@@ -39,6 +40,18 @@ export async function GET(req: Request) {
         planKey: plan,
         idTrans,
         getId,
+      });
+      void emitServerAnalyticsEvent({
+        userId,
+        name: "subscription_started",
+        properties: { plan, provider: "bitpay" },
+        idempotencyKey: `sub_${userId}_${idTrans}`,
+      });
+      void emitServerAnalyticsEvent({
+        userId,
+        name: "purchase",
+        properties: { plan, provider: "bitpay" },
+        idempotencyKey: `purchase_${userId}_${idTrans}`,
       });
       return NextResponse.redirect(
         pricingUrl(
