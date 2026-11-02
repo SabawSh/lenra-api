@@ -15,6 +15,11 @@ export const lenraRoutes: LenraRouteEntry[] = [
     load: () => import("../../api-routes/admin/adaptive-teacher/route.js"),
   },
   {
+    urlPattern: "/api/admin/content-catalog",
+    paramNames: [],
+    load: () => import("../../api-routes/admin/content-catalog/route.js"),
+  },
+  {
     urlPattern: "/api/admin/content-import",
     paramNames: [],
     load: () => import("../../api-routes/admin/content-import/route.js"),
@@ -73,6 +78,16 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/admin/user-plans",
     paramNames: [],
     load: () => import("../../api-routes/admin/user-plans/route.js"),
+  },
+  {
+    urlPattern: "/api/analytics/collect",
+    paramNames: [],
+    load: () => import("../../api-routes/analytics/collect/route.js"),
+  },
+  {
+    urlPattern: "/api/analytics/identify",
+    paramNames: [],
+    load: () => import("../../api-routes/analytics/identify/route.js"),
   },
   {
     urlPattern: "/api/attempts",
@@ -303,6 +318,31 @@ export const lenraRoutes: LenraRouteEntry[] = [
     urlPattern: "/api/pages/admin/adaptive-teacher-users",
     paramNames: [],
     load: () => import("../../api-routes/pages/admin/adaptive-teacher-users/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/admin/analytics/acquisition",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/admin/analytics/acquisition/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/admin/analytics/overview",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/admin/analytics/overview/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/admin/analytics/search-console",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/admin/analytics/search-console/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/admin/analytics/users",
+    paramNames: [],
+    load: () => import("../../api-routes/pages/admin/analytics/users/route.js"),
+  },
+  {
+    urlPattern: "/api/pages/admin/analytics/users/:visitorId",
+    paramNames: ["visitorId"],
+    load: () => import("../../api-routes/pages/admin/analytics/users/[visitorId]/route.js"),
   },
   {
     urlPattern: "/api/pages/admin/media-videos",
