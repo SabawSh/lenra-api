@@ -30,6 +30,11 @@ export interface CheckoutStatePayload {
   userId: UserId;
   plan: BitpayPlanKey;
   locale: string;
+  /**
+   * Server-side order (payment_orders.id). Absent only on legacy states
+   * minted before orders existed, or when the orders table is missing.
+   */
+  orderId?: string;
 }
 
 export function createCheckoutState(payload: CheckoutStatePayload): string {
@@ -38,6 +43,7 @@ export function createCheckoutState(payload: CheckoutStatePayload): string {
       userId: payload.userId,
       plan: payload.plan,
       locale: payload.locale,
+      ...(payload.orderId ? { orderId: payload.orderId } : {}),
       exp: Math.floor(Date.now() / 1000) + CHECKOUT_STATE_TTL_SECONDS,
     }),
   ).toString("base64url");
@@ -61,12 +67,19 @@ export function verifyCheckoutState(state: string): CheckoutStatePayload | null 
       userId?: unknown;
       plan?: unknown;
       locale?: unknown;
+      orderId?: unknown;
       exp?: unknown;
     };
 
     if (typeof raw.userId !== "string" || raw.userId.length < 8) return null;
     if (typeof raw.plan !== "string" || !isBitpayPlanKey(raw.plan)) return null;
     if (typeof raw.locale !== "string" || raw.locale.length === 0) return null;
+    if (
+      raw.orderId !== undefined &&
+      (typeof raw.orderId !== "string" || !/^[0-9a-f-]{36}$/i.test(raw.orderId))
+    ) {
+      return null;
+    }
     if (
       typeof raw.exp !== "number" ||
       raw.exp < Math.floor(Date.now() / 1000)
@@ -78,6 +91,7 @@ export function verifyCheckoutState(state: string): CheckoutStatePayload | null 
       userId: raw.userId as UserId,
       plan: raw.plan,
       locale: raw.locale,
+      ...(typeof raw.orderId === "string" ? { orderId: raw.orderId } : {}),
     };
   } catch {
     return null;

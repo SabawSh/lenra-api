@@ -3,7 +3,15 @@ import { pool } from "@/lib/db/connection";
 import type { BitpayPlanKey } from "@/lib/payments/plans";
 import { getPlanDurationMs } from "@/lib/payments/plans";
 import type { UserId } from "@/types/schema";
-import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import type {
+  Pool,
+  PoolConnection,
+  RowDataPacket,
+  ResultSetHeader,
+} from "mysql2/promise";
+
+/** The shared pool, or a connection inside an open transaction. */
+export type DbExecutor = Pool | PoolConnection;
 
 interface SubscriptionExpiryRow extends RowDataPacket {
   expires_at: Date | string;
@@ -37,8 +45,9 @@ function isMissingSourceColumnError(error: unknown): boolean {
 
 export async function getActiveSubscriptionExpiresAt(
   userId: UserId,
+  db: DbExecutor = pool,
 ): Promise<Date | null> {
-  const [rows] = await pool.query<SubscriptionExpiryRow[]>(
+  const [rows] = await db.query<SubscriptionExpiryRow[]>(
     `SELECT expires_at
      FROM user_subscriptions
      WHERE user_id = ?
@@ -79,25 +88,31 @@ export async function getActiveSubscription(
   return { planKey: row.plan_key, expiresAt: toDate(row.expires_at) };
 }
 
-export async function activateUserSubscription(params: {
-  userId: UserId;
-  planKey: BitpayPlanKey;
-  idTrans: number;
-  getId: number;
-}): Promise<Date> {
-  const [existingRows] = await pool.query<ExistingTransRow[]>(
+export async function activateUserSubscription(
+  params: {
+    userId: UserId;
+    planKey: BitpayPlanKey;
+    idTrans: number;
+    getId: number;
+  },
+  db: DbExecutor = pool,
+): Promise<{ subscriptionId: string; expiresAt: Date }> {
+  const [existingRows] = await db.query<ExistingTransRow[]>(
     `SELECT id FROM user_subscriptions WHERE bitpay_trans_id = ? LIMIT 1`,
     [params.idTrans],
   );
   if (existingRows[0]) {
-    const [row] = await pool.query<SubscriptionExpiryRow[]>(
+    const [row] = await db.query<SubscriptionExpiryRow[]>(
       `SELECT expires_at FROM user_subscriptions WHERE id = ? LIMIT 1`,
       [existingRows[0].id],
     );
-    return row[0]?.expires_at ? toDate(row[0].expires_at) : new Date();
+    return {
+      subscriptionId: existingRows[0].id,
+      expiresAt: row[0]?.expires_at ? toDate(row[0].expires_at) : new Date(),
+    };
   }
 
-  const currentExpiry = await getActiveSubscriptionExpiresAt(params.userId);
+  const currentExpiry = await getActiveSubscriptionExpiresAt(params.userId, db);
   const now = new Date();
   const base =
     currentExpiry && toDate(currentExpiry).getTime() > now.getTime()
@@ -105,13 +120,14 @@ export async function activateUserSubscription(params: {
       : now;
   const expiresAt = new Date(base.getTime() + getPlanDurationMs(params.planKey));
 
-  await pool.query<ResultSetHeader>(
+  const subscriptionId = randomUUID();
+  await db.query<ResultSetHeader>(
     `INSERT INTO user_subscriptions (
       id, user_id, plan_key, status, starts_at, expires_at,
       bitpay_trans_id, bitpay_get_id
     ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`,
     [
-      randomUUID(),
+      subscriptionId,
       params.userId,
       params.planKey,
       base,
@@ -121,7 +137,7 @@ export async function activateUserSubscription(params: {
     ],
   );
 
-  return expiresAt;
+  return { subscriptionId, expiresAt };
 }
 
 /**
@@ -171,4 +187,28 @@ export async function adminGrantUserSubscription(params: {
   }
 
   return expiresAt;
+}
+
+/**
+ * Activates a plan paid entirely by a 100% discount code. Extends the
+ * current expiry like a purchase. Must run inside the redemption transaction.
+ */
+export async function grantDiscountSubscription(
+  params: { userId: UserId; planKey: BitpayPlanKey },
+  db: DbExecutor,
+): Promise<{ subscriptionId: string; expiresAt: Date }> {
+  const currentExpiry = await getActiveSubscriptionExpiresAt(params.userId, db);
+  const now = new Date();
+  const base =
+    currentExpiry && currentExpiry.getTime() > now.getTime() ? currentExpiry : now;
+  const expiresAt = new Date(base.getTime() + getPlanDurationMs(params.planKey));
+  const subscriptionId = randomUUID();
+
+  await db.query<ResultSetHeader>(
+    `INSERT INTO user_subscriptions (
+      id, user_id, plan_key, status, source, starts_at, expires_at
+    ) VALUES (?, ?, ?, 'active', 'discount', ?, ?)`,
+    [subscriptionId, params.userId, params.planKey, base, expiresAt],
+  );
+  return { subscriptionId, expiresAt };
 }
