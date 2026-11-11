@@ -16,18 +16,22 @@ export const getVideoLibrary = unstable_cache(
     const allIds = [...seriesIds, ...standaloneIds];
 
     const [partCounts, difficultyMixes] = await Promise.all([
-      vq.countPartsForVideoIds(standaloneIds),
+      vq.countPartsForVideoIds(allIds),
       vq.countPartDifficultyForVideoIds(allIds),
     ]);
 
-    const movies: Video[] = standalone.map((row) => ({
+    // Titles without any live clip are hidden until their clips are uploaded,
+    // so learners never open an empty movie or series.
+    const hasClips = (id: string) => (partCounts.get(id) ?? 0) > 0;
+
+    const movies: Video[] = standalone.filter((row) => hasClips(row.id)).map((row) => ({
       ...row,
       genres: row.genres,
       partsCount: partCounts.get(row.id) ?? 0,
       difficultyMix: difficultyMixes.get(row.id),
     }));
 
-    const seriesWithMix: Video[] = series.map((row) => ({
+    const seriesWithMix: Video[] = series.filter((row) => hasClips(row.id)).map((row) => ({
       ...row,
       difficultyMix: difficultyMixes.get(row.id),
     }));
