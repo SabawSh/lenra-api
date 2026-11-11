@@ -1,8 +1,4 @@
 import { syncUserAchievements } from "@/lib/achievements/engine";
-import {
-  analyticsContextFromRequest,
-  emitServerAnalyticsEvent,
-} from "@/lib/analytics/serverEmit";
 import { requireLearningUser } from "@/lib/auth/requireLearningAccess";
 import { pool } from "@/lib/db/connection";
 import {
@@ -122,19 +118,6 @@ export async function POST(req: Request) {
     const achievementSync = created
       ? await syncUserAchievements(user.id)
       : { newlyUnlocked: [], totalXpAwarded: 0 };
-
-    if (created) {
-      await emitServerAnalyticsEvent({
-        userId: user.id,
-        name: "word_saved",
-        properties: {
-          success: true,
-          clip_id: clipId ?? undefined,
-        },
-        context: analyticsContextFromRequest(req),
-        idempotencyKey: `word_saved_dict_${user.id}_${dictionaryEntryId}`,
-      });
-    }
 
     return NextResponse.json({
       success: true,

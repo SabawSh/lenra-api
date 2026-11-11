@@ -24,49 +24,8 @@ import {
 import { parseCookieHeader } from "@/lib/auth/readSessionFromRequest";
 import { postAuthRedirectPath } from "@/lib/auth/postAuthRedirect";
 import { setSessionForUserOnResponse } from "@/lib/auth/setSessionForUser";
-import {
-  analyticsContextFromRequest,
-  emitServerAnalyticsEvent,
-} from "@/lib/analytics/serverEmit";
-import { identifyVisitorToUser } from "@/lib/analytics/ingest";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
-
-async function emitGoogleAuthAnalytics(opts: {
-  req: Request;
-  userId: string;
-  isNewUser: boolean;
-}): Promise<void> {
-  const context = analyticsContextFromRequest(opts.req);
-  if (context.visitorId) {
-    try {
-      await identifyVisitorToUser({
-        visitorId: context.visitorId,
-        sessionId: context.sessionId ?? undefined,
-        userId: opts.userId,
-      });
-    } catch (err) {
-      console.warn("[google callback] identify analytics", err);
-    }
-  }
-  if (opts.isNewUser) {
-    await emitServerAnalyticsEvent({
-      userId: opts.userId,
-      name: "registration_completed",
-      properties: { provider: "google" },
-      idempotencyKey: `reg_google_${opts.userId}`,
-      context,
-    });
-  } else {
-    await emitServerAnalyticsEvent({
-      userId: opts.userId,
-      name: "login",
-      properties: { provider: "google" },
-      idempotencyKey: `login_google_${opts.userId}_${new Date().toISOString().slice(0, 13)}`,
-      context,
-    });
-  }
-}
 
 export const runtime = "nodejs";
 
@@ -172,12 +131,6 @@ export async function GET(req: Request) {
 
       revalidateTag("user", { expire: 0 });
 
-      await emitGoogleAuthAnalytics({
-        req,
-        userId: user.id,
-        isNewUser,
-      });
-
       const destination = postAuthRedirectPath(user, requestedNext, {
         pushPrompt: isNewUser,
       });
@@ -234,12 +187,6 @@ export async function GET(req: Request) {
     });
 
     revalidateTag("user", { expire: 0 });
-
-    await emitGoogleAuthAnalytics({
-      req,
-      userId: user.id,
-      isNewUser,
-    });
 
     const destination = postAuthRedirectPath(user, requestedNext, {
       pushPrompt: isNewUser,

@@ -37,12 +37,6 @@ import {
 import { isContentIdParam } from "@/lib/ids/contentId";
 import { NextResponse } from "next/server";
 import { runAfterResponse } from "@/lib/runAfterResponse";
-import {
-  analyticsContextFromRequest,
-  emitServerAnalyticsEvent,
-} from "@/lib/analytics/serverEmit";
-import { getDbPool } from "@/lib/db/connection";
-import type { RowDataPacket } from "mysql2";
 
 type PerformanceBody = {
   partId: string;
@@ -96,7 +90,6 @@ export async function POST(req: Request) {
     const auth = await requireLearningUser();
     if (!auth.ok) return auth.response;
     const user = auth.user;
-    const analyticsContext = analyticsContextFromRequest(req);
 
     const body = (await req.json()) as PerformanceBody;
 
@@ -374,7 +367,7 @@ export async function POST(req: Request) {
       console.error("[performance] section skill update failed", err);
     }
 
-    // Non-critical: XP, achievements, cache, analytics — never block the client.
+    // Non-critical: XP, achievements, cache — never block the client.
     runAfterResponse(async () => {
       try {
         const streakBefore = await getStreakForUser(user.id);
@@ -386,165 +379,29 @@ export async function POST(req: Request) {
         const streakAdvancedToday =
           streakAfter > streakBefore.current && perf.score > 0;
 
-        const clipAward =
-          perf.score > 0
-            ? await awardClipPerformanceXp({
-                userId: user.id,
-                partId,
-                score: perf.score,
-                inputMode: sentenceInputMode,
-                accuracy: perf.accuracy,
-                speed: perf.speed,
-                modeBonus: perf.modeBonus,
-                wrongMoves: perf.wrongMoves,
-                hintsUsed: perf.hintsUsed,
-                clipDifficulty: raw.challenge?.clipDifficulty,
-                difficultyScore: raw.challenge?.difficultyScore,
-                wasAlreadyCompleted,
-                previousBestScore,
-                streakAdvancedToday,
-                amount: xpThisAttempt,
-              }).catch((err) => {
-                console.error(
-                  "[performance] awardClipPerformanceXp failed",
-                  err,
-                );
-                return null;
-              })
-            : null;
-
-        const inputMode = sentenceInputMode ?? "drag";
-        const exerciseType =
-          inputMode === "voice" ? "speaking" : "sentence_rebuild";
-        const success = perf.score > 0 && !skipped;
-        const durationMs = Math.max(
-          0,
-          Math.floor(raw.finishedAt - raw.startedAt),
-        );
-
-        await emitServerAnalyticsEvent({
-          userId: user.id,
-          name: "exercise_attempt",
-          properties: {
-            part_id: partId,
-            movie_id: body.videoId ?? undefined,
-            clip_id: body.episodeId ?? undefined,
-            exercise_type: exerciseType,
-            input_mode: inputMode,
-            success,
+        if (perf.score > 0) {
+          await awardClipPerformanceXp({
+            userId: user.id,
+            partId,
             score: perf.score,
-            attempt_number: sessionAttempts,
-            hint_used: raw.hintsUsed,
-            duration_ms: durationMs,
-          },
-          context: analyticsContext,
-          idempotencyKey: `ex_att_${user.id}_${partId}_${raw.finishedAt}`,
-        });
-
-        if (success) {
-          await emitServerAnalyticsEvent({
-            userId: user.id,
-            name:
-              inputMode === "voice"
-                ? "speaking_completed"
-                : "sentence_rebuild_completed",
-            properties: {
-              part_id: partId,
-              movie_id: body.videoId ?? undefined,
-              exercise_type: exerciseType,
-              success: true,
-              score: perf.score,
-              duration_ms: durationMs,
-            },
-            context: analyticsContext,
-            idempotencyKey: `ex_ok_${user.id}_${partId}_${raw.finishedAt}`,
-          });
-          await emitServerAnalyticsEvent({
-            userId: user.id,
-            name: "exercise_completed",
-            properties: {
-              part_id: partId,
-              exercise_type: exerciseType,
-              success: true,
-              score: perf.score,
-            },
-            context: analyticsContext,
-            idempotencyKey: `ex_done_${user.id}_${partId}_${raw.finishedAt}`,
-          });
-          if (!wasAlreadyCompleted) {
-            await emitServerAnalyticsEvent({
-              userId: user.id,
-              name: "lesson_complete",
-              properties: {
-                part_id: partId,
-                movie_id: body.videoId ?? undefined,
-                score: perf.score,
-              },
-              context: analyticsContext,
-              idempotencyKey: `lesson_${user.id}_${partId}`,
-            });
-
-            // Product definition: "lesson" = one learning part/clip. First ever success.
-            const pool = getDbPool();
-            const [prior] = await pool.query<(RowDataPacket & { c: number })[]>(
-              `SELECT COUNT(*) AS c FROM user_part_progress
-               WHERE user_id = ? AND completed_at IS NOT NULL AND part_id <> ?`,
-              [user.id, partId],
+            inputMode: sentenceInputMode,
+            accuracy: perf.accuracy,
+            speed: perf.speed,
+            modeBonus: perf.modeBonus,
+            wrongMoves: perf.wrongMoves,
+            hintsUsed: perf.hintsUsed,
+            clipDifficulty: raw.challenge?.clipDifficulty,
+            difficultyScore: raw.challenge?.difficultyScore,
+            wasAlreadyCompleted,
+            previousBestScore,
+            streakAdvancedToday,
+            amount: xpThisAttempt,
+          }).catch((err) => {
+            console.error(
+              "[performance] awardClipPerformanceXp failed",
+              err,
             );
-            if (Number(prior[0]?.c ?? 0) === 0) {
-              await emitServerAnalyticsEvent({
-                userId: user.id,
-                name: "first_lesson_completed",
-                properties: {
-                  part_id: partId,
-                  movie_id: body.videoId ?? undefined,
-                  score: perf.score,
-                },
-                context: analyticsContext,
-                idempotencyKey: `first_lesson_${user.id}`,
-              });
-            }
-          }
-        } else {
-          await emitServerAnalyticsEvent({
-            userId: user.id,
-            name:
-              inputMode === "voice"
-                ? "speaking_failed"
-                : "sentence_rebuild_failed",
-            properties: {
-              part_id: partId,
-              exercise_type: exerciseType,
-              success: false,
-              score: perf.score,
-              duration_ms: durationMs,
-            },
-            context: analyticsContext,
-            idempotencyKey: `ex_fail_${user.id}_${partId}_${raw.finishedAt}`,
-          });
-        }
-
-        if (clipAward?.xpGained && clipAward.xpGained > 0) {
-          await emitServerAnalyticsEvent({
-            userId: user.id,
-            name: "xp_earned",
-            properties: {
-              part_id: partId,
-              xp: clipAward.xpGained,
-              exercise_type: exerciseType,
-            },
-            context: analyticsContext,
-            idempotencyKey: `xp_${user.id}_${partId}_${raw.finishedAt}`,
-          });
-        }
-
-        if (streakAdvancedToday) {
-          await emitServerAnalyticsEvent({
-            userId: user.id,
-            name: "streak_extended",
-            properties: { attempt_number: streakAfter },
-            context: analyticsContext,
-            idempotencyKey: `streak_${user.id}_${localDateKey()}`,
+            return null;
           });
         }
 

@@ -1,8 +1,4 @@
 import { syncUserAchievements } from "@/lib/achievements/engine";
-import {
-  analyticsContextFromRequest,
-  emitServerAnalyticsEvent,
-} from "@/lib/analytics/serverEmit";
 import { requireLearningUser } from "@/lib/auth/requireLearningAccess";
 import { savedCardToJson } from "@/lib/db/queries/savedVocabularyCards";
 import {
@@ -67,14 +63,6 @@ export async function POST(req: Request) {
     }
 
     const achievementSync = await syncUserAchievements(user.id);
-
-    await emitServerAnalyticsEvent({
-      userId: user.id,
-      name: "word_saved",
-      properties: { clip_id: clipId, success: true },
-      context: analyticsContextFromRequest(req),
-      idempotencyKey: `word_saved_ctx_${user.id}_${clipId}_${card.id}`,
-    });
 
     return NextResponse.json({
       success: true,

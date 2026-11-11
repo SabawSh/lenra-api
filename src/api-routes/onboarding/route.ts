@@ -1,7 +1,3 @@
-import {
-  analyticsContextFromRequest,
-  emitServerAnalyticsEvent,
-} from "@/lib/analytics/serverEmit";
 import { readSessionFromCookies } from "@/lib/auth/sessionCookie";
 import { toJsonStringArray } from "@/lib/db/jsonStringArray";
 import {
@@ -113,17 +109,6 @@ export async function PATCH(req: Request) {
       "@/lib/db/queries/userAdaptiveSkill"
     );
     await seedOverallSkillFromOnboardingIfAbsent(session.userId);
-  }
-
-  if (patch.onboardingCompletedAt) {
-    const context = analyticsContextFromRequest(req);
-    await emitServerAnalyticsEvent({
-      userId: session.userId,
-      name: "onboarding_completed",
-      properties: { provider: "onboarding" },
-      idempotencyKey: `onboarding_done_${session.userId}`,
-      context,
-    });
   }
 
   revalidateTag("user", { expire: 0 });
