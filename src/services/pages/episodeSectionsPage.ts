@@ -169,6 +169,7 @@ export async function buildEpisodeSectionsPage(
         seasonNum: season.seasonNum,
         episodeNum: episode.episodeNum,
         seriesVideoId: video.id,
+        seriesName: video.name,
         sections: sectionsWithHref,
         totalParts,
         estimatedSectionCount,
