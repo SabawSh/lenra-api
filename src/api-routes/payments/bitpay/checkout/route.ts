@@ -14,7 +14,11 @@ import { createBitpayPayment } from "@/lib/payments/bitpay";
 import { createCheckoutState } from "@/lib/payments/checkoutState";
 import { newFactorId } from "@/lib/payments/orderVerification";
 import { getPlanAmountRial, isBitpayPlanKey } from "@/lib/payments/plans";
-import { getBitpayPublicOrigin, pricingUrl } from "@/lib/payments/publicOrigin";
+import {
+  getBitpayPublicOrigin,
+  parseCheckoutReturnTo,
+  pricingUrl as basePricingUrl,
+} from "@/lib/payments/publicOrigin";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -22,6 +26,9 @@ export async function GET(req: Request) {
   const plan = url.searchParams.get("plan") ?? "";
   const locale = url.searchParams.get("locale") ?? "fa";
   const origin = getBitpayPublicOrigin(req);
+  const returnTo = parseCheckoutReturnTo(url.searchParams.get("from"));
+  const pricingUrl = (l: string, o: string, params: URLSearchParams) =>
+    basePricingUrl(l, o, params, returnTo);
 
   if (!isBitpayPlanKey(plan)) {
     return NextResponse.redirect(
@@ -144,6 +151,7 @@ export async function GET(req: Request) {
     plan,
     locale,
     ...(order ? { orderId: order.id } : {}),
+    returnTo,
   });
 
   const callbackUrl = new URL("/api/payments/bitpay/callback", origin);

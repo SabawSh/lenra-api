@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { BitpayPlanKey } from "@/lib/payments/plans";
 import { isBitpayPlanKey } from "@/lib/payments/plans";
+import type { CheckoutReturnTo } from "@/lib/payments/publicOrigin";
 import type { UserId } from "@/types/schema";
 
 const CHECKOUT_STATE_TTL_SECONDS = 30 * 60;
@@ -35,6 +36,8 @@ export interface CheckoutStatePayload {
    * minted before orders existed, or when the orders table is missing.
    */
   orderId?: string;
+  /** Page to come back to after BitPay; absent = public pricing page. */
+  returnTo?: CheckoutReturnTo;
 }
 
 export function createCheckoutState(payload: CheckoutStatePayload): string {
@@ -44,6 +47,7 @@ export function createCheckoutState(payload: CheckoutStatePayload): string {
       plan: payload.plan,
       locale: payload.locale,
       ...(payload.orderId ? { orderId: payload.orderId } : {}),
+      ...(payload.returnTo === "dashboard" ? { ret: "dashboard" } : {}),
       exp: Math.floor(Date.now() / 1000) + CHECKOUT_STATE_TTL_SECONDS,
     }),
   ).toString("base64url");
@@ -68,6 +72,7 @@ export function verifyCheckoutState(state: string): CheckoutStatePayload | null 
       plan?: unknown;
       locale?: unknown;
       orderId?: unknown;
+      ret?: unknown;
       exp?: unknown;
     };
 
@@ -92,6 +97,7 @@ export function verifyCheckoutState(state: string): CheckoutStatePayload | null 
       plan: raw.plan,
       locale: raw.locale,
       ...(typeof raw.orderId === "string" ? { orderId: raw.orderId } : {}),
+      ...(raw.ret === "dashboard" ? { returnTo: "dashboard" as const } : {}),
     };
   } catch {
     return null;

@@ -26,10 +26,10 @@ export async function GET(req: Request) {
     );
   }
 
-  const { userId, plan, locale, orderId } = checkout;
+  const { userId, plan, locale, orderId, returnTo } = checkout;
   const redirect = (params: Record<string, string>) =>
     NextResponse.redirect(
-      pricingUrl(locale, origin, new URLSearchParams(params)),
+      pricingUrl(locale, origin, new URLSearchParams(params), returnTo),
     );
 
   const idTrans = Number(url.searchParams.get("trans_id"));

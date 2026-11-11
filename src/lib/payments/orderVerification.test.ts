@@ -135,3 +135,36 @@ describe("checkout state orderId", () => {
     assert.equal(verifyCheckoutState(`${forged}.${sig}`), null);
   });
 });
+
+describe("checkout return page", () => {
+  const ENV = { ...process.env };
+  beforeEach(() => {
+    process.env.AUTH_SECRET = "x".repeat(48);
+  });
+  afterEach(() => {
+    process.env = ENV;
+  });
+
+  it("carries the dashboard return through the signed state", async () => {
+    const userId = "11111111-2222-3333-4444-555555555555" as UserId;
+    const state = createCheckoutState({ userId, plan: "monthly", locale: "fa", returnTo: "dashboard" });
+    assert.equal(verifyCheckoutState(state)?.returnTo, "dashboard");
+    const plain = createCheckoutState({ userId, plan: "monthly", locale: "fa" });
+    assert.equal(verifyCheckoutState(plain)?.returnTo, undefined);
+  });
+
+  it("builds the result URL for the page the checkout came from", async () => {
+    const { pricingUrl, parseCheckoutReturnTo } = await import("./publicOrigin.js");
+    const q = new URLSearchParams({ payment: "success" });
+    assert.equal(
+      pricingUrl("fa", "https://lenra.ir", q, "dashboard").toString(),
+      "https://lenra.ir/dashboard/plans?payment=success",
+    );
+    assert.equal(
+      pricingUrl("en", "https://lenra.ir", q, "dashboard").toString(),
+      "https://lenra.ir/en/dashboard/plans?payment=success",
+    );
+    assert.equal(pricingUrl("fa", "https://lenra.ir", q).pathname, "/pricing");
+    assert.equal(parseCheckoutReturnTo("evil"), "pricing");
+  });
+});

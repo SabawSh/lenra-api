@@ -39,8 +39,29 @@ export function pricingPath(locale: string): string {
   return locale === DEFAULT_LOCALE ? "/pricing" : `/${locale}/pricing`;
 }
 
-export function pricingUrl(locale: string, origin: string, params?: URLSearchParams) {
-  const url = new URL(pricingPath(locale), origin);
+/** Where a checkout started, so its result is shown on the same page. */
+export type CheckoutReturnTo = "pricing" | "dashboard";
+
+export function parseCheckoutReturnTo(value: unknown): CheckoutReturnTo {
+  return value === "dashboard" ? "dashboard" : "pricing";
+}
+
+function dashboardPlansPath(locale: string): string {
+  return locale === DEFAULT_LOCALE
+    ? "/dashboard/plans"
+    : `/${locale}/dashboard/plans`;
+}
+
+export function pricingUrl(
+  locale: string,
+  origin: string,
+  params?: URLSearchParams,
+  returnTo: CheckoutReturnTo = "pricing",
+) {
+  const url = new URL(
+    returnTo === "dashboard" ? dashboardPlansPath(locale) : pricingPath(locale),
+    origin,
+  );
   if (params) {
     for (const [key, value] of params.entries()) {
       url.searchParams.set(key, value);
