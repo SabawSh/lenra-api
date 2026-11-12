@@ -1,20 +1,34 @@
 import { computeAdaptiveSpeed } from "@/lib/performance/difficulty/adaptiveSpeed";
 import {
+  ATTEMPT_COST,
   MIN_COVERAGE_FOR_FULL_SCORE,
+  PRONUNCIATION_CREDIT,
   SCORE_WEIGHTS,
+  TIME_CREDIT,
 } from "@/lib/performance/difficulty/constants";
-import {
-  computeHintPenalty,
-  computeMistakePenalty,
-} from "@/lib/performance/difficulty/mistakePenalty";
-import {
-  computeSentenceDifficulty,
-} from "@/lib/performance/difficulty/sentenceDifficulty";
+import { computeSentenceDifficulty } from "@/lib/performance/difficulty/sentenceDifficulty";
 import { computeWeightedAccuracy } from "@/lib/performance/difficulty/weightedAccuracy";
 import { PerformanceRaw, PerformanceResult } from "@/types/learning";
 
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+
+/** Linear ramp: 0 at/below `zero`, 1 at/above `full`. */
+function ramp(value: number, zero: number, full: number): number {
+  return clamp01((value - zero) / (full - zero));
+}
+
+function finiteCount(n: unknown): number {
+  const v = Number(n);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+
+/**
+ * Clip score from what actually happened in the attempt — see SCORE_WEIGHTS.
+ * Shared verbatim by the app (instant modal) and lenra-api (persisted score).
+ */
 export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
   const challenge = raw.challenge;
+  const isVoice = raw.inputMode === "voice";
 
   const accuracy = computeWeightedAccuracy({
     correctWords: raw.correctWords,
@@ -27,14 +41,25 @@ export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
       ? 0
       : Math.min(1, raw.attemptedWords / Math.max(1, raw.totalWords));
 
-  const durationSec = Math.max(1, (raw.finishedAt - raw.startedAt) / 1000);
+  // Learner time only: drop mic permission / speech-engine start-up.
+  const totalMs = Math.max(0, raw.finishedAt - raw.startedAt);
+  const engineWaitMs = Math.min(
+    totalMs,
+    Math.max(0, Number(raw.engineWaitMs) || 0),
+  );
+  const durationSec = Math.max(1, (totalMs - engineWaitMs) / 1000);
+
+  const thinkMs =
+    raw.thinkMs != null && Number.isFinite(raw.thinkMs)
+      ? Math.max(0, Math.min(totalMs, raw.thinkMs))
+      : null;
 
   const { index: sentenceDifficultyIndex } = computeSentenceDifficulty(
     challenge,
     raw.attemptedWords,
   );
 
-  // Display/XP only — not used in clip score or skill calibration.
+  // 0–1: expected time for this line ÷ learner time (1 = on pace or faster).
   const speed = computeAdaptiveSpeed({
     durationSec,
     attemptedWords: raw.attemptedWords,
@@ -44,73 +69,79 @@ export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
     challenge,
   });
 
-  // Voice is harder in practice — reflected in time budget, not a post-score nerf.
-  const modeBonus = raw.inputMode === "voice" ? 1 : 0.97;
+  // Kept for stored-progress XP replay; no longer part of the score.
+  const modeBonus = isVoice ? 1 : 0.97;
 
-  const mistakePenalty = computeMistakePenalty({
-    wrongMoves: raw.wrongMoves,
-    attemptedWords: raw.attemptedWords,
-    challenge,
-  });
+  // Pronunciation = how closely the recognised words matched the line, blended
+  // with the engine's own acoustic confidence when it reports one. Engines snap
+  // to real words, so the word match alone is generous; confidence is what
+  // drops when speech is unclear.
+  const wordMatch =
+    isVoice &&
+    raw.pronunciationMatch != null &&
+    Number.isFinite(raw.pronunciationMatch)
+      ? clamp01(raw.pronunciationMatch)
+      : null;
+  const speechConfidence =
+    isVoice &&
+    raw.speechConfidence != null &&
+    Number.isFinite(raw.speechConfidence) &&
+    raw.speechConfidence > 0
+      ? clamp01(raw.speechConfidence)
+      : null;
+  const pronunciation =
+    wordMatch != null && speechConfidence != null
+      ? (wordMatch + speechConfidence) / 2
+      : (wordMatch ?? speechConfidence);
 
-  const hintPenalty = computeHintPenalty({
-    hintsUsed: raw.hintsUsed,
-    attemptedWords: raw.attemptedWords,
-  });
+  const speakingRetries = isVoice ? finiteCount(raw.speakingRetries) : 0;
+  const speakingAbandons = isVoice ? finiteCount(raw.speakingAbandons) : 0;
+  const wrongMoves = finiteCount(raw.wrongMoves);
+  const hintsUsed = finiteCount(raw.hintsUsed);
 
-  // Expose UI-facing rounded metrics so "looks perfect" can consistently mean
-  // "scores/rewards as perfect" for voice practice.
-  const displayedAccuracyIs100 = Math.round(accuracy * 100) === 100;
-
-  const consistency = Math.max(
-    0,
-    1 - (mistakePenalty + hintPenalty) / (SCORE_WEIGHTS.accuracy * 0.6),
+  const correctnessCredit = accuracy;
+  // Legacy clients without a pronunciation signal: fall back to correctness.
+  const pronunciationCredit =
+    pronunciation != null
+      ? ramp(pronunciation, PRONUNCIATION_CREDIT.zero, PRONUNCIATION_CREDIT.full)
+      : correctnessCredit;
+  const attemptsCredit = clamp01(
+    1 -
+      wrongMoves * ATTEMPT_COST.wrongMove -
+      hintsUsed * ATTEMPT_COST.hint -
+      speakingRetries * ATTEMPT_COST.speakingRetry -
+      speakingAbandons * ATTEMPT_COST.speakingAbandon,
   );
+  const timeCredit = ramp(speed, TIME_CREDIT.zero, TIME_CREDIT.full);
 
-  // Zero accuracy must never produce a non-zero clip score. Consistency and
-  // mode expectation are modifiers on real correctness — not a free floor that
-  // can mark a failed attempt as successful completion (score > 0).
+  const w = isVoice ? SCORE_WEIGHTS.voice : SCORE_WEIGHTS.drag;
+
+  // Zero accuracy must never produce a non-zero clip score.
   let score = 0;
   if (accuracy > 0) {
-    let baseScore =
-      accuracy * SCORE_WEIGHTS.accuracy +
-      consistency * SCORE_WEIGHTS.consistency +
-      modeBonus * SCORE_WEIGHTS.inputExpectation;
+    score =
+      correctnessCredit * w.correctness +
+      pronunciationCredit * w.pronunciation +
+      attemptsCredit * w.attempts +
+      timeCredit * w.time;
 
-    score = baseScore;
-
-    // Keep coverage impact, but make it gentle to avoid hidden punishment feeling.
+    // Gentle coverage impact so a partial build can't look complete.
     if (coverage < MIN_COVERAGE_FOR_FULL_SCORE) {
       const coverageRatio = coverage / MIN_COVERAGE_FOR_FULL_SCORE;
-      const coverageFactor =
-        0.85 + Math.max(0, Math.min(1, coverageRatio)) * 0.15;
-      score *= coverageFactor;
+      score *= 0.85 + clamp01(coverageRatio) * 0.15;
     }
 
     score = Math.max(0, Math.min(100, Math.round(score)));
   }
 
-  const voicePerfectByDisplayedMetrics =
-    raw.inputMode === "voice" &&
-    score >= 99 &&
-    displayedAccuracyIs100 &&
-    raw.wrongMoves === 0 &&
-    raw.hintsUsed === 0;
-
-  if (voicePerfectByDisplayedMetrics) {
-    score = 100;
-  }
-
-  const flawlessOutcome =
-    displayedAccuracyIs100 &&
-    raw.wrongMoves === 0 &&
-    raw.hintsUsed === 0 &&
-    raw.correctWords >= raw.attemptedWords &&
-    raw.attemptedWords > 0 &&
-    score === 100;
-
   // Only voice can be a “perfect run” (full score ceiling + max XP).
-  const isPerfectRun = raw.inputMode === "voice" && flawlessOutcome;
+  const isPerfectRun =
+    isVoice &&
+    score === 100 &&
+    wrongMoves === 0 &&
+    hintsUsed === 0 &&
+    raw.attemptedWords > 0 &&
+    raw.correctWords >= raw.attemptedWords;
 
   let level: PerformanceResult["level"] = "weak";
   if (score >= 85) level = "excellent";
@@ -127,7 +158,16 @@ export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
     level,
     inputMode: raw.inputMode,
     isPerfectRun,
-    wrongMoves: raw.wrongMoves,
-    hintsUsed: raw.hintsUsed,
+    wrongMoves,
+    hintsUsed,
+    pronunciation,
+    thinkSec: thinkMs != null ? thinkMs / 1000 : null,
+    failedAttempts: speakingRetries + speakingAbandons,
+    credits: {
+      correctness: correctnessCredit,
+      pronunciation: isVoice ? pronunciationCredit : null,
+      attempts: attemptsCredit,
+      time: timeCredit,
+    },
   };
 }
