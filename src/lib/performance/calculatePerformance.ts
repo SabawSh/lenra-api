@@ -89,10 +89,13 @@ export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
     raw.speechConfidence > 0
       ? clamp01(raw.speechConfidence)
       : null;
-  const pronunciation =
+  const blendedPronunciation =
     wordMatch != null && speechConfidence != null
       ? (wordMatch + speechConfidence) / 2
       : (wordMatch ?? speechConfidence);
+  // Shown to the learner only with engine confidence: word match alone (e.g.
+  // Safari) is ~100% for almost any recognisable speech, so it says little.
+  const pronunciation = speechConfidence != null ? blendedPronunciation : null;
 
   const speakingRetries = isVoice ? finiteCount(raw.speakingRetries) : 0;
   const speakingAbandons = isVoice ? finiteCount(raw.speakingAbandons) : 0;
@@ -102,8 +105,12 @@ export function calculatePerformance(raw: PerformanceRaw): PerformanceResult {
   const correctnessCredit = accuracy;
   // Legacy clients without a pronunciation signal: fall back to correctness.
   const pronunciationCredit =
-    pronunciation != null
-      ? ramp(pronunciation, PRONUNCIATION_CREDIT.zero, PRONUNCIATION_CREDIT.full)
+    blendedPronunciation != null
+      ? ramp(
+          blendedPronunciation,
+          PRONUNCIATION_CREDIT.zero,
+          PRONUNCIATION_CREDIT.full,
+        )
       : correctnessCredit;
   const attemptsCredit = clamp01(
     1 -
