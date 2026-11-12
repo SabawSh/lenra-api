@@ -125,6 +125,8 @@ export type LearnPageResolveResult =
         sessionStats: LearningSessionStats;
         reviewMode: boolean;
         reviewReturnPath: string;
+        /** Movie or episode name, for the browser tab title. */
+        contentTitle?: string;
         sectionNav: {
           sectionIndex: number;
           totalParts: number;
@@ -547,6 +549,9 @@ export async function resolveLearnPage(
         sessionStats,
         reviewMode: reviewMode && !!user,
         reviewReturnPath: exitListHref,
+        contentTitle: await loadSeriesSummaryTitle(episodeId, "").catch(
+          () => "",
+        ),
         sectionNav: {
           sectionIndex,
           totalParts,
@@ -927,6 +932,7 @@ export async function resolveLearnPage(
         sessionStats,
         reviewMode: reviewMode && !!user,
         reviewReturnPath: exitListHref,
+        contentTitle: video.name,
         sectionNav: {
           sectionIndex,
           totalParts,
